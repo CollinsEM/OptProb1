@@ -21,7 +21,7 @@ distclean: clean
 
 ######################################################################
 
-run: run_v1
+run: run_v1 run_v2
 
 run_v0: foo_v0
 	./foo_v0 -N 64
@@ -34,6 +34,18 @@ run_v1: foo_v1
 	./foo_v1 -N 512
 	./foo_v1 -N 4096
 	./foo_v1 -N 32768
+
+run_v2: foo_v2
+# ./foo_v2 -N 64 -nt 1
+# ./foo_v2 -N 512 -nt 1
+# ./foo_v2 -N 4096 -nt 1
+	./foo_v2 -N 32768 -nt 1
+	./foo_v2 -N 32768 -nt 2
+# ./foo_v2 -N 32768 -nt 2 -pavg
+	./foo_v2 -N 32768 -nt 4
+# ./foo_v2 -N 32768 -nt 4 -pavg
+	./foo_v2 -N 32768 -nt 8
+# ./foo_v2 -N 32768 -nt 8 -pavg
 
 ######################################################################
 
