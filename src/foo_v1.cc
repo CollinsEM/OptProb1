@@ -37,8 +37,11 @@ int main(int argc, char ** argv) {
       numCycles = atoi( argv[++i] );
     }
     // Parse single parameter switches
-    else if (!strcmp(argv[i], "-v")) {
+    else if (!strcmp(argv[i], "+v")) {
       verbose = true;
+    }
+    else if (!strcmp(argv[i], "-v")) {
+      verbose = false;
     }
   }
   // Report input vector size
@@ -54,14 +57,15 @@ int main(int argc, char ** argv) {
     OnlineAverage<real> xAvg;
     t[0] = omp_get_wtime();
     for (int i=0; i<vecSize; ++i) {
-      X[i] = x_test[i%N] + v_test[i%N] + b_test[i%N];
+      const int j = &0x40;
+      X[i] = x_test[j] + v_test[j] + b_test[j];
       xAvg += X[i];
     }
     t[1] = omp_get_wtime();
 
     const real eps = 1e-5;
     const real E = xAvg.mean();
-    const real rV = 1.0/xAvg.variance() + eps;
+    const real rV = 1.0/(sqrt(xAvg.variance()) + eps);
     t[2] = omp_get_wtime();
     for (int i=0; i<vecSize; ++i) {
       Y[i] = (x_test[i%N] + v_test[i%N] + b_test[i%N] - E)*gamma_test[i%N]*rV + beta_test[i%N];
@@ -77,7 +81,7 @@ int main(int argc, char ** argv) {
     real l2 = 0.0;
     t[6] = omp_get_wtime();
     for (int i=0; i<vecSize; ++i) {
-      real diff = Y[i] - Y[i%N];
+      real diff = Y[i] - Y_test[i%N];
       l2 += diff*diff;
     }
     t[7] = omp_get_wtime();

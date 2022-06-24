@@ -12,10 +12,8 @@
 // First attempt to implement loops in parallel using OpenMP
 // directives.
 
-typedef float real;
-
 int main(int argc, char ** argv) {
-  int verbosity = 1;
+  int verbosity = 0;
   int vecSize = N;
   int numThreads = 1;
   int numCycles = 1;
@@ -48,6 +46,7 @@ int main(int argc, char ** argv) {
     }
   }
   
+  if (verbosity > 0) printf("verbosity:  %d\n", verbosity);
   // Report input vector size
   if (verbosity > 0) printf("vecSize:    %d\n", vecSize);
   // Report number of threads
@@ -110,6 +109,7 @@ int main(int argc, char ** argv) {
       for (int i=0; i<vecSize; ++i) {
         sum += X[i];
       }
+      if (verbosity > 2 && n == 0) printf("sum: %f\n", sum);
       avg = sum / vecSize;
       
       // Compute the variance
@@ -157,8 +157,8 @@ int main(int argc, char ** argv) {
   
     // Save values for computing Y
     const real E  = avg;
-    const real rV = 1.0/(var + eps);
-
+    const real rV = 1.0/(sqrt(var) + eps);
+    
 //     t[T++] = omp_get_wtime();
 // #pragma omp parallel for
 //     for (int i=0; i<vecSize; ++i) {
@@ -183,7 +183,7 @@ int main(int argc, char ** argv) {
     t[T++] = omp_get_wtime();
 #pragma omp parallel for reduction(+ : l2)
     for (int i=0; i<vecSize; ++i) {
-      real diff = Y[i] - Y[i%N];
+      real diff = Y[i] - Y_test[i%N];
       l2 += diff*diff;
     }
     const real L2 = sqrt(l2/vecSize);
@@ -194,11 +194,11 @@ int main(int argc, char ** argv) {
     if (n==0) {
       printf("Sum of squared errors in the output vector Y: %10.6g.\n", L2);
     }
-    for (int i=0; i<T/2; ++i) {
+    
+    NT = T/2;
+    for (int i=0; i<NT; ++i) {
       dt[i] += t[2*i+1] - t[2*i];
     }
-
-    NT = T/2;
   }
   
   delete [] X;
@@ -210,6 +210,7 @@ int main(int argc, char ** argv) {
     dT += dt[i];
   }
   
+  printf("Execution times (averaged over %d cycles)\n", numCycles);
   for (int i=0; i<NT; ++i) {
     printf("%10.4g \t %6.2f%%\n", dt[i], 100*dt[i]/dT);
   }
