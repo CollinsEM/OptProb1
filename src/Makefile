@@ -1,4 +1,5 @@
 CC = g++
+NVCC = nvcc
 OPT = -O3 -fopenmp
 INCLUDES += -I./include
 CXXFLAGS += $(OPT)
@@ -61,6 +62,9 @@ run_v3: foo_v3
 
 %.o: %.cc
 	$(CC) $(CXXFLAGS) $(INCLUDES) -c $^ -o $@
+
+%.o: %.cu
+	$(NVCC) $(CXXFLAGS) $(INCLUDES) -c $^ -o $@
 
 %.d: %.cc
 	$(CC) -MM $^ -o $@
