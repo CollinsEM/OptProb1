@@ -40,27 +40,27 @@ int main(int argc, char ** argv) {
   // This is a running average calculator that I use quite a lot when
   // reading in data from a file or a stream without having to store
   // every value.
-  OnlineAverage<double> xAvg;
-  double t0 = omp_get_wtime();
+  OnlineAverage<float> xAvg;
+  float t0 = omp_get_wtime();
   for (int i=0; i<N; ++i) {
     xAvg += x_test[i%64] + v_test[i%64] + b_test[i%64];
   }
-  double t1 = omp_get_wtime();
+  float t1 = omp_get_wtime();
   
   // Sanity check to make sure my library is correct
-  double sum = 0.0;
+  float sum = 0.0;
   for (int i=0; i<N; ++i) {
     sum += x_test[i%64] + v_test[i%64] + b_test[i%64];
   }
-  double avg = sum/N;
-  double delta = 0.0;
-  double tmp = 0.0;
+  float avg = sum/N;
+  float delta = 0.0;
+  float tmp = 0.0;
   for (int i=0; i<N; ++i) {
     delta = x_test[i%64] + v_test[i%64] + b_test[i%64] - avg;
     tmp += delta*delta;
   }
-  double var = tmp/(N-1);
-  double dev = sqrt(var);
+  float var = tmp/(N-1);
+  float dev = sqrt(var);
   
   printf("xAvg.count: %ld\n", xAvg.count());
   printf("xAvg.mean: %f %f\n", xAvg.mean(), avg);
