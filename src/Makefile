@@ -1,6 +1,6 @@
 CC = g++
 NVCC = nvcc
-OPT = -O3 -fopenmp
+OPT = -fopenmp -O3 #-g
 INCLUDES += -I./include
 CXXFLAGS += $(OPT)
 LDLIBS += -lgomp
@@ -33,13 +33,20 @@ NTHREADS = 8
 run: run_v1 run_v2 run_v3
 
 run_v0: foo_v0
+	./foo_v0 -N $(NCYCLES)
+	./foo_v0 -N 32
 	./foo_v0 -N 64
 	./foo_v0 -N 512
 	./foo_v0 -N 4096
 	./foo_v0 -N 32768
+	./foo_v0 -N 262144
 
 run_v1: foo_v1
-	./foo_v1 $(VERBOSITY) -ncyc $(NCYCLES) -N $(VECSIZE)
+#	./foo_v1 $(VERBOSITY) -ncyc $(NCYCLES) -N $(VECSIZE)
+	./foo_v1 $(VERBOSITY) -ncyc $(NCYCLES) -N 64
+	./foo_v1 $(VERBOSITY) -ncyc $(NCYCLES) -N 4096
+	./foo_v1 $(VERBOSITY) -ncyc $(NCYCLES) -N 32768
+	./foo_v1 $(VERBOSITY) -ncyc $(NCYCLES) -N 262144
 
 run_v2: foo_v2
 #	./foo_v2 $(VERBOSITY) -ncyc $(NCYCLES) -N $(VECSIZE) -nt $(NTHREADS)

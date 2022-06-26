@@ -75,6 +75,8 @@ struct OnlineAverage {
   sum_t S;
   value_t minVal;
   value_t maxVal;
+private:
+  sum_t d;
 
 public:
   /**
@@ -93,12 +95,11 @@ public:
   template<typename T>
   OnlineAverage & operator+=(const T x) {
     N++;
-    sum_t delta(x);
-    delta -= M;
-    M += delta/N;
-    S += delta*(x-M);
-    minVal = ( x < minVal ? x : minVal);
-    maxVal = ( x > maxVal ? x : maxVal);
+    d = (x - M);
+    M += d/N;
+    S += d*(x-M);
+    // minVal = ( x < minVal ? x : minVal);
+    // maxVal = ( x > maxVal ? x : maxVal);
     return *this;
   }
   /**

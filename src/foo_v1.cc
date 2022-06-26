@@ -1,15 +1,16 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <vector>
-using std::vector;
+#include <string>
 
 #include <omp.h>
 
-#include <test_inputs.h>
+#include <TestVec.h>
 #include <emc_utils.h>
 
-// Version 0.1.0
+// Version 0.1
+//
+// Baseline Implementation.
 //
 // This version will serve as the baseline for comparision against
 // future optimized versions.
@@ -18,99 +19,139 @@ using std::vector;
 //
 // Only a few modest attempts at efficiency have been implemented.
 //
-
-typedef float real;
-
+// Parse command line arguments
+//  * +v : More verbose output
+//  * -v : Less verbose output
+//  * -N <int> : Set size of data array
+//  * -ncyc <int> : Set number of cycles to run
+//
+// Use OpenMP's high-resolution timing. Run multiple cycles to
+// generate average timings.
 int main(int argc, char ** argv) {
-  bool verbose = false;
-  int vecSize = N;
+  int verbose = 1;
+  int vecSize = 64;
   int numCycles = 1;
-  double t[20], dt[10] = { 0.0 };
   // Parse command line arguments
   for (int i=1; i<argc; ++i) {
+    // Specify verbosity level
+    if ( !strcmp(argv[i], "+v") ) {
+      verbose++;
+    }
+    else if ( !strcmp(argv[i], "-v") ) {
+      verbose--;
+    }
     // Specify the size of the input array
-    if (!strcmp(argv[i], "-N") && (i+1) < argc) {
+    else if (!strcmp(argv[i], "-N") && (i+1) < argc) {
       vecSize = atoi( argv[++i] );
     }
     // Specify the number of cycles to run to average timings
     else if (!strcmp(argv[i], "-ncyc") && (i+1) < argc) {
       numCycles = atoi( argv[++i] );
     }
-    // Parse single parameter switches
-    else if (!strcmp(argv[i], "+v")) {
-      verbose = true;
-    }
-    else if (!strcmp(argv[i], "-v")) {
-      verbose = false;
-    }
   }
   // Report input vector size
-  if (verbose) printf("vecSize: %d\n", vecSize);
+  if (verbose>0) printf("vecSize:   %d\n", vecSize);
+  // Report number of cycles
+  if (verbose>0) printf("numCycles: %d\n", numCycles);
   
-  real * X = new real[vecSize];
-  real * Y = new real[vecSize];
-  
+  int nt;
+  // Time stamps
+  double t[32];
+  // Keep a running average of the elapsed times
+  OnlineAverage<double> dt[16];
+  // Array of output strings
+  std::string lbls[16];
+
+  // Generate random test vectors
+  TestVec<float> x(vecSize, 0.0, 10.0);
+  TestVec<float> v(vecSize, 0.0, 1.0);
+  TestVec<float> b(vecSize, 2.5, 1.5);
+  TestVec<float> gamma(vecSize, 0.0, 1.0);
+  TestVec<float> beta(vecSize, 0.5, 0.5);
+  // Solution vector
+  SolnVec<float> y(vecSize);
+  float sumX, avgX, sumDX, varX, devX, rVar, dY, sumDY;
+  Vec<float> X(vecSize), dX(vecSize), Y(vecSize);
+  OnlineAverage<float> dXSq, dYSq;
   for (int n=0; n<numCycles; ++n) {
-    // This is a running average calculator that I use quite a lot when
-    // reading in data from a file or a stream without having to store
-    // every value.
-    OnlineAverage<real> xAvg;
-    t[0] = omp_get_wtime();
-    for (int i=0; i<vecSize; ++i) {
-      const int j = &0x40;
-      X[i] = x_test[j] + v_test[j] + b_test[j];
-      xAvg += X[i];
-    }
-    t[1] = omp_get_wtime();
+    int p(0), q(0);
+    
+    // Initialize the input vectors with random elements for their
+    // respective distributions.
+    x.init();
+    v.init();
+    b.init();
+    gamma.init();
+    beta.init();
+    // Generate the solution vector
+    y.eval(x, v, b, gamma, beta);
 
-    const real eps = 1e-5;
-    const real E = xAvg.mean();
-    const real rV = 1.0/(sqrt(xAvg.variance()) + eps);
-    t[2] = omp_get_wtime();
+    lbls[p] = "Compute X, xAvg";
+    t[q++] = omp_get_wtime();
+    // Compute the sum of all x' values
+    sumX = 0.0;
     for (int i=0; i<vecSize; ++i) {
-      Y[i] = (x_test[i%N] + v_test[i%N] + b_test[i%N] - E)*gamma_test[i%N]*rV + beta_test[i%N];
+      X[i] = x[i] + v[i] + b[i];
+      sumX += X[i];
     }
-    t[3] = omp_get_wtime();
-    
-    t[4] = omp_get_wtime();
-    for (int i=0; i<vecSize; ++i) {
-      Y[i] = (X[i] - E)*gamma_test[i%N]*rV + beta_test[i%N];
-    }
-    t[5] = omp_get_wtime();
-    
-    real l2 = 0.0;
-    t[6] = omp_get_wtime();
-    for (int i=0; i<vecSize; ++i) {
-      real diff = Y[i] - Y_test[i%N];
-      l2 += diff*diff;
-    }
-    t[7] = omp_get_wtime();
-    if (verbose && n==0) {
-      printf("Sum of squared errors in the output vector Y: %g\n",
-             sqrt(l2/vecSize));
-    }
+    // Compute the average of x'
+    avgX = sumX/vecSize;
+    t[q++] = omp_get_wtime();
+    dt[p++] += t[q-1] - t[q-2];
 
-    for (int i=0; i<4; ++i) {
-      dt[i] += t[2*i+1] - t[2*i];
+    lbls[p] = "Compute dX, xVar";
+    t[q++] = omp_get_wtime();
+    // Compute the variance of x'
+    sumDX = 0.0;
+    for (int i=0; i<vecSize; ++i) {
+      dX[i] = X[i] - avgX;
+      sumDX += dX[i]*dX[i];
     }
+    varX = sumDX/(vecSize-1);
+    rVar = 1.0/(sqrt(varX)+1e-8);
+    t[q++] = omp_get_wtime();
+    dt[p++] += t[q-1] - t[q-2];
+    dXSq += sumDX;
+
+    lbls[p] = "Compute Y";
+    t[q++] = omp_get_wtime();
+    for (int i=0; i<vecSize; ++i) {
+      Y[i] = dX[i]*gamma[i]*rVar + beta[i];
+    }
+    t[q++] = omp_get_wtime();
+    dt[p++] += t[q-1] - t[q-2];
     
+    lbls[p] = "Compute Errors";
+    t[q++] = omp_get_wtime();
+    // Compute errors in Y
+    sumDY = 0.0;
+    for (int i=0; i<vecSize; ++i) {
+      dY = Y[i] - y[i];
+      sumDY += dY*dY;
+    }
+    t[q++] = omp_get_wtime();
+    dt[p++] += t[q-1] - t[q-2];
+    dYSq += sumDY;
+    
+    lbls[p] = "Total Time";
   }
-  
-  delete [] X;
-  delete [] Y;
+  if (verbose) {
+    printf("%12g %12g Sum squared errors in Y.\n\n",
+           dYSq.mean(), dYSq.stdDev());
+  }
   
   double dT = 0.0;
   for (int nt=0; nt<4; ++nt) {
-    dt[nt] /= numCycles;
-    dT += dt[nt];
+    dT += dt[nt].mean();
   }
   
-  printf("%10.4g \t %6.2f%% \t Avg. time to compute mean and variance (and X)\n", dt[0], 100*dt[0]/dT);
-  printf("%10.4g \t %6.2f%% \t Avg. time to compute output vector (without X)\n", dt[1], 100*dt[1]/dT);
-  printf("%10.4g \t %6.2f%% \t Avg. time to compute output vector (with X)\n", dt[2], 100*dt[2]/dT);
-  printf("%10.4g \t %6.2f%% \t Avg. time to compute L2 error norm\n", dt[3], 100*dt[3]/dT);
-  printf("------------------\n");
-  printf("%10.4g \t %6.2f%% \t Avg. total execution time\n", dT, 100*dT/dT);
+  for (int nt=0; nt<4; ++nt) {
+    printf("%12g %12g %6.2f%% %s\n",
+           dt[nt].mean(), dt[nt].stdDev(),
+           dt[nt].mean()/dT, lbls[nt].c_str());
+  }
+  printf("------------------ ------------------\n");
+   printf("%12g %12s %6.2f%% \t Avg. total execution time\n", dT, "", 100*dT/dT);
   printf("\n");
   return 0;
 }

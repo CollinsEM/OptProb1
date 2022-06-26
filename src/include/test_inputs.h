@@ -9,11 +9,10 @@
  *
  * */
 
-const int N = 64;
-typedef float real;
 
+const int N = 64;
 // test input vectors for length 64
-const real x_test[64] = {0.000000,
+const float x_test[64] = {0.000000,
 	1.000000,
 	2.000000,
 	3.000000,
@@ -79,7 +78,7 @@ const real x_test[64] = {0.000000,
 	63.000000,
 };
 
-const real v_test[64] = {0.000000,
+const float v_test[64] = {0.000000,
 	0.833333,
 	1.666667,
 	2.500000,
@@ -145,7 +144,7 @@ const real v_test[64] = {0.000000,
 	52.500000,
 };
 
-const real gamma_test[64] = {2.300000,
+const float gamma_test[64] = {2.300000,
 	3.069231,
 	3.838462,
 	4.607692,
@@ -211,7 +210,7 @@ const real gamma_test[64] = {2.300000,
 	50.761539,
 };
 
-const real beta_test[64] = {0.250000,
+const float beta_test[64] = {0.250000,
 	0.964286,
 	1.678571,
 	2.392857,
@@ -277,7 +276,7 @@ const real beta_test[64] = {0.250000,
 	45.250000,
 };
 
-const real b_test[64] = {0.000000,
+const float b_test[64] = {0.000000,
 	0.909091,
 	1.818182,
 	2.727273,
@@ -344,7 +343,7 @@ const real b_test[64] = {0.000000,
 };
 
 //Expected outut values for Y 
-const real Y_test[64] = {-3.671951,
+const float Y_test[64] = {-3.671951,
 	-4.103208,
 	-4.451182,
 	-4.715874,

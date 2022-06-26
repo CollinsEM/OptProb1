@@ -1,4 +1,4 @@
-#include <cstdio>
+Ve#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -11,13 +11,21 @@
 //
 // First attempt to implement loops in parallel using OpenMP
 // directives.
-
+//
+// Parse command line arguments
+//  * +v : More verbose output
+//  * -v : Less verbose output
+//  * -N <int> : Set size of data array
+//  * -ncyc <int> : Set number of cycles to run
+//  * -nt <int> : Set number of threads
+//
+// Use OpenMP's high-resolution timing. Run multiple cycles to
+// generate average timings.
 int main(int argc, char ** argv) {
-  int verbosity = 0;
+  int verbose = 0;
   int vecSize = N;
   int numThreads = 1;
   int numCycles = 1;
-  int parAvg = 0;
   // Parse command line arguments
   for (int i=1; i<argc; ++i) {
     // Specify the size of the input array
@@ -32,38 +40,56 @@ int main(int argc, char ** argv) {
     else if (!strcmp(argv[i], "-ncyc") && (i+1) < argc) {
       numCycles = atoi( argv[++i] );
     }
-    // Verbosity can be increased by repeating '+v'
+    // Verbose can be increased by repeating '+v'
     else if (!strcmp(argv[i], "+v")) {
-      verbosity++;
+      verbose++;
     }
-    // Verbosity can be decreased by repeating '-v'
+    // Verbose can be decreased by repeating '-v'
     else if (!strcmp(argv[i], "-v")) {
-      verbosity--;
-    }
-    // Specify which averaging branch to execute (serial or parallel)
-    else if (!strcmp(argv[i], "-pavg")) {
-      parAvg = 1;
+      verbose--;
     }
   }
-  
-  if (verbosity > 0) printf("verbosity:  %d\n", verbosity);
+  if (verbose > 0) printf("verbose:  %d\n", verbose);
   // Report input vector size
-  if (verbosity > 0) printf("vecSize:    %d\n", vecSize);
+  if (verbose > 0) printf("vecSize:    %d\n", vecSize);
   // Report number of threads
-  if (verbosity > 0) printf("numThreads: %d\n", numThreads);
+  if (verbose > 0) printf("numThreads: %d\n", numThreads);
   omp_set_num_threads(numThreads);
   
   const real eps = 1e-5;
   
-  // Array for recording time-stamps
-  int NT = 5;
-  double t[20], dt[10] = { 0.0 };
+  int nt;
+  // Time stamps
+  double t[32];
+  // Keep a running average of the elapsed times
+  OnlineAverage<double> dt[16];
+  // Array of output strings
+  std::string lbls[16];
 
-  real * X = new real[vecSize];
-  real * Y = new real[vecSize];
-  
+  // Generate random test vectors
+  TestVec<float> x(vecSize, 0.0, 10.0);
+  TestVec<float> v(vecSize, 0.0, 1.0);
+  TestVec<float> b(vecSize, 2.5, 1.5);
+  TestVec<float> gamma(vecSize, 0.0, 1.0);
+  TestVec<float> beta(vecSize, 0.5, 0.5);
+  // Solution vector
+  SolnVec<float> y(vecSize);
+  float sumX, avgX, sumDX, varX, devX, rVar, dY, sumDY;
+  Vec<float> X(vecSize), dX(vecSize), Y(vecSize);
+  OnlineAverage<float> dXSq, dYSq;
   for (int n=0; n<numCycles; ++n) {
-    int T=0;
+    int p(0), q(0);
+
+    // Initialize the input vectors with random elements for their
+    // respective distributions.
+    x.init();
+    v.init();
+    b.init();
+    gamma.init();
+    beta.init();
+    // Generate the solution vector
+    y.eval(x, v, b, gamma, beta);
+
     // NOTE: I'm splitting out the following steps of caching X and
     // computing avg & var so that it's easier to see any latency due to
     // the initial load of data values.
@@ -75,7 +101,7 @@ int main(int argc, char ** argv) {
       X[i] = x_test[i%N] + v_test[i%N] + b_test[i%N];
     }
     t[T++] = omp_get_wtime();
-    if (verbosity > 0 && n==0) printf("%15.10f \t Time to compute x' = x + v + b.\n", t[T-1]-t[T-2]);
+    if (verbose > 0 && n==0) printf("%15.10f \t Time to compute x' = x + v + b.\n", t[T-1]-t[T-2]);
 
     real avg, var;
     if (!parAvg) {
@@ -97,7 +123,7 @@ int main(int argc, char ** argv) {
       t[T++] = omp_get_wtime();
       avg = xAvg.mean();
       var = xAvg.variance();
-      if (verbosity > 0 && n==0) {
+      if (verbose > 0 && n==0) {
         printf("%15.10f \t Time to compute mean and variance (serial).\n", t[T-1]-t[T-2]);
       }
     }
@@ -109,7 +135,7 @@ int main(int argc, char ** argv) {
       for (int i=0; i<vecSize; ++i) {
         sum += X[i];
       }
-      if (verbosity > 2 && n == 0) printf("sum: %f\n", sum);
+      if (verbose > 2 && n == 0) printf("sum: %f\n", sum);
       avg = sum / vecSize;
       
       // Compute the variance
@@ -122,7 +148,7 @@ int main(int argc, char ** argv) {
       var = dSq/(vecSize-1);
       t[T++] = omp_get_wtime();
       
-      if (verbosity > 1 && n==0) {
+      if (verbose > 1 && n==0) {
         printf("OpenMP:\n");
         printf("sum: %f\n", sum);
         printf("avg: %f\n", avg);
@@ -146,11 +172,11 @@ int main(int argc, char ** argv) {
         printf("avg: %f\n", avg);
         printf("var: %f\n", var);
       }
-      if (verbosity > 0 && n==0) {
+      if (verbose > 0 && n==0) {
         printf("%15.10f \t Time to compute mean and variance (OpenMP).\n", t[T-1]-t[T-2]);
       }
     }
-    if (verbosity > 1 && n==0) {
+    if (verbose > 1 && n==0) {
       printf("x-avg: %f\n", avg);
       printf("x-var: %f\n", var);
     }
@@ -165,7 +191,7 @@ int main(int argc, char ** argv) {
 //       Y[i] = (x_test[i%N] + v_test[i%N] + b_test[i%N] - E)*gamma_test[i%N]*rV + beta_test[i%N];
 //     }
 //     t[T++] = omp_get_wtime();
-//     if (verbosity > 0 && n==0) {
+//     if (verbose > 0 && n==0) {
 //       printf("%15.10f \t Time to compute Y from x, v, and b.\n", t[T-1]-t[T-2]);
 //     }
   
@@ -175,7 +201,7 @@ int main(int argc, char ** argv) {
       Y[i] = (X[i] - E)*gamma_test[i%N]*rV + beta_test[i%N];
     }
     t[T++] = omp_get_wtime();
-    if (verbosity > 0 && n==0) {
+    if (verbose > 0 && n==0) {
       printf("%15.10f \t Time to compute Y from x'.\n", t[T-1]-t[T-2]);
     }
     
@@ -188,7 +214,7 @@ int main(int argc, char ** argv) {
     }
     const real L2 = sqrt(l2/vecSize);
     t[T++] = omp_get_wtime();
-    if (verbosity > 0 && n==0) {
+    if (verbose > 0 && n==0) {
       printf("%15.10f \t Time to compute L2 error for Y.\n", t[T-1]-t[T-2]);
     }
     if (n==0) {
@@ -218,7 +244,7 @@ int main(int argc, char ** argv) {
   printf("%10.4g \t %6.2f%% \n", dT, 100.0);
   printf("\n");
   
-  if (verbosity > 1) {
+  if (verbose > 1) {
     printf("t[%2d]: %20.10f\n", 0, t[0]);
     for (int i=1; i<2*NT; ++i) {
       printf("t[%2d]: %20.10f  %15.6g  %15.6g\n", i, t[i], t[i]-t[i-1], t[i]-t[0]);
