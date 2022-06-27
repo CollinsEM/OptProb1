@@ -56,7 +56,6 @@ int main(int argc, char ** argv) {
   // Report number of cycles
   if (verbose>2) printf("numCycles: %d\n", numCycles);
   
-  int nt;
   // Time stamps
   double t[32];
   // Keep a running average of the elapsed times

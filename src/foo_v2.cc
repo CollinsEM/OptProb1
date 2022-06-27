@@ -59,7 +59,6 @@ int main(int argc, char ** argv) {
   if (verbose > 0) printf("numThreads: %d\n", numThreads);
   omp_set_num_threads(numThreads);
   
-  int nt;
   // Time stamps
   double t[32];
   // Keep a running average of the elapsed times

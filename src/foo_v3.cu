@@ -1,6 +1,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
+#include <sstream>
+#include <vector>
 
 #include <omp.h>
 
@@ -13,7 +16,7 @@
 #error CUDA is not available.
 #endif
 
-#include <test_inputs.h>
+#include <TestVec.h>
 #include <emc_utils.h>
 
 // Version 0.3
@@ -29,18 +32,10 @@
 // Use OpenMP's high-resolution timing. Run multiple cycles to
 // generate average timings.
 __global__
-void computeX(float * X, const float * x, const float * v, const float * b, int N, int sz) {
+void computeX(float * X, const float * x, const float * v, const float * b, int sz) {
   const int idx = threadIdx.x + blockIdx.x*blockDim.x;
   if (idx < sz) {
-    X[idx] = x[idx%N] + v[idx%N] + b[idx%N];
-  }
-}
-
-__global__
-void duplicate(float * X, const float * x, int N, int sz) {
-  const int idx = threadIdx.x + blockIdx.x*blockDim.x;
-  if (idx < sz) {
-    X[idx] = x[idx%N];
+    X[idx] = x[idx] + v[idx] + b[idx];
   }
 }
 
@@ -48,7 +43,7 @@ __global__
 void computeDelta(float * delta, float * X, float E, int sz) {
   const int idx = threadIdx.x + blockIdx.x*blockDim.x;
   if (idx < sz) {
-    delta[idx] = X[idx%N] - E;
+    delta[idx] = X[idx] - E;
   }
 }
 
@@ -212,8 +207,8 @@ public:
 };
 
 int main(int argc, char ** argv) {
-  int verbosity = 0;
-  int vecSize = N;
+  int verbose = 0;
+  int vecSize = 64;
   // int numThreads = 1;
   int numCycles = 1;
   // Parse command line arguments
@@ -232,81 +227,112 @@ int main(int argc, char ** argv) {
     }
     // Verbosity can be increased by repeating '+v'
     else if (!strcmp(argv[i], "+v")) {
-      verbosity++;
+      verbose++;
     }
     // Verbosity can be decreased by repeating '-v'
     else if (!strcmp(argv[i], "-v")) {
-      verbosity--;
+      verbose--;
     }
   }
   
-  if (verbosity > 0) printf("verbosity:  %d\n", verbosity);
+  if (verbose > 0) printf("verbose:  %d\n", verbose);
   // Report input vector size
-  if (verbosity > 0) printf("vecSize:    %d\n", vecSize);
+  if (verbose > 0) printf("vecSize:    %d\n", vecSize);
   // Report number of threads
-  // if (verbosity > 0) printf("numThreads: %d\n", numThreads);
+  // if (verbose > 0) printf("numThreads: %d\n", numThreads);
   // omp_set_num_threads(numThreads);
   
-  const float eps = 1e-5;
-  
-  // Array for recording time-stamps
-  int NT = 5;
-  double t[20], dt[10] = { 0.0 };
-  
-  // NOTE: I'm splitting out the following steps of caching X and
-  // computing avg & var so that it's easier to see any latency due to
-  // the initial load of data values.
+  // Time stamps
+  double t[32];
+  // Keep a running average of the elapsed times
+  OnlineAverage<double> dt[16];
+  // Array of output strings
+  std::vector<std::string> lbls;
+
+  // Generate random test vectors
+  TestVec<float> x(vecSize, 0.0, 10.0);
+  TestVec<float> v(vecSize, 0.0, 1.0);
+  TestVec<float> b(vecSize, 2.5, 1.5);
+  TestVec<float> gamma(vecSize, 0.0, 1.0);
+  TestVec<float> beta(vecSize, 0.5, 0.5);
+  // Solution vector
+  SolnVec<float> y(vecSize);
   
   const dim3 G((vecSize+1023)/1024);
   const dim3 B(min(1024,vecSize));
-  // Load and cache the input vector x' = x + v + b
-  thrust::device_vector<float> dx(N), dy(N), dv(N), db(N), dgamma(N), dbeta(N);
+  // Input vectors
+  thrust::device_vector<float> dx(vecSize);
+  thrust::device_vector<float> dv(vecSize);
+  thrust::device_vector<float> db(vecSize);
+  thrust::device_vector<float> dgamma(vecSize);
+  thrust::device_vector<float> dbeta(vecSize);
   float * px = thrust::raw_pointer_cast(dx.data());
-  float * py = thrust::raw_pointer_cast(dy.data());
   float * pv = thrust::raw_pointer_cast(dv.data());
   float * pb = thrust::raw_pointer_cast(db.data());
   float * pgamma = thrust::raw_pointer_cast(dgamma.data());
   float * pbeta = thrust::raw_pointer_cast(dbeta.data());
-  thrust::device_vector<float> dX(vecSize), dY(vecSize), dGamma(vecSize), dBeta(vecSize);
+  // Output vectors
+  thrust::device_vector<float> dX(vecSize);
+  thrust::device_vector<float> dY(vecSize);
+  thrust::device_vector<float> dy(vecSize);
   float * pX = thrust::raw_pointer_cast(dX.data());
-  float * pY = thrust::raw_pointer_cast(dY.data());
-  float * pGamma = thrust::raw_pointer_cast(dGamma.data());
-  float * pBeta = thrust::raw_pointer_cast(dBeta.data());
-  // Copy over the first N data points
-  thrust::copy(x_test, x_test+N, dx.begin());
-  thrust::copy(Y_test, Y_test+N, dy.begin());
-  thrust::copy(v_test, v_test+N, dv.begin());
-  thrust::copy(b_test, b_test+N, db.begin());
-  thrust::copy(gamma_test, gamma_test+N, dgamma.begin());
-  thrust::copy(beta_test,  beta_test+N,  dbeta.begin());
-  for (int n=0; n<numCycles; ++n) {
-    int T=0;
-    t[T++] = omp_get_wtime();
-    computeX<<<G, B>>>(pX, px, pv, pb, N, vecSize);
-    duplicate<<<G, B>>>(pGamma, pgamma, N, vecSize);
-    duplicate<<<G, B>>>(pBeta, pbeta, N, vecSize);
-    t[T++] = omp_get_wtime();
+  float * pY = thrust::raw_pointer_cast(dY.data()); // gpu solution
+  float * py = thrust::raw_pointer_cast(dy.data()); // cpu solution
   
-    t[T++] = omp_get_wtime();
+  for (int n=0; n<numCycles; ++n) {
+    int p(0), q(0);
+    
+    // Initialize the input vectors with random elements for their
+    // respective distributions.
+    x.init();
+    v.init();
+    b.init();
+    gamma.init();
+    beta.init();
+    // Generate the solution vector
+    y.eval(x, v, b, gamma, beta);
+    
+    // Copy the input vectors to the device
+    thrust::copy(x.data, x.data+vecSize, dx.begin());
+    thrust::copy(v.data, v.data+vecSize, dv.begin());
+    thrust::copy(b.data, b.data+vecSize, db.begin());
+    thrust::copy(gamma.data, gamma.data+vecSize, dgamma.begin());
+    thrust::copy(beta.data,  beta.data+vecSize,  dbeta.begin());
+    // Copy the CPU solution vector to the device
+    thrust::copy(y.data, y.data+vecSize, dy.begin());
+    
+    if (n==0) lbls.push_back("Compute X");
+    t[q++] = omp_get_wtime();
+    computeX<<<G, B>>>(pX, px, pv, pb, vecSize);
+    t[q++] = omp_get_wtime();
+    dt[p++] += t[q-1] - t[q-2];
+
+    if (n==0) lbls.push_back("Compute X-bar");
+    t[q++] = omp_get_wtime();
     const float xSum = thrust::reduce(dX.begin(), dX.end());
     const float xBar = xSum/vecSize;
-    t[T++] = omp_get_wtime();
-    if (verbosity > 1 && n == 0) printf("xSum: %10.6g, xBar: %10.6g\n", xSum, xBar);
+    t[q++] = omp_get_wtime();
+    dt[p++] += t[q-1] - t[q-2];
+    if (verbose > 1 && n == 0) printf("xSum: %10.6g, xBar: %10.6g\n", xSum, xBar);
 
-    t[T++] = omp_get_wtime();
+    if (n==0) lbls.push_back("Compute X-var");
+    t[q++] = omp_get_wtime();
     DeltaSquared deltaSq(xBar);
     const float sumDeltaSq = thrust::transform_reduce(dX.begin(), dX.end(), deltaSq, 0.0, thrust::plus<float>());
     const float xVar = sumDeltaSq/(vecSize-1);
-    const float rVar = 1.0/(sqrt(xVar) + eps);
-    t[T++] = omp_get_wtime();
-    if (verbosity > 1 && n == 0) printf("sumDeltaSq: %10.6g, xVar: %10.6g, rVar: %10.6g\n", sumDeltaSq, xVar, rVar);
+    const float rVar = 1.0/(sqrt(xVar) + 1e-8);
+    t[q++] = omp_get_wtime();
+    dt[p++] += t[q-1] - t[q-2];
+    if (verbose > 1 && n == 0) printf("sumDeltaSq: %10.6g, xVar: %10.6g, rVar: %10.6g\n", sumDeltaSq, xVar, rVar);
 
     // thrust::transform(make_zip_iterator(make_tuple(dX.begin(),dGamma.begin(),dBeta.begin())),
     //                   make_zip_iterator(make_tuple(dX.end(),  dGamma.end(),  dBeta.end())),
     //                   dY.begin());
-    t[T++] = omp_get_wtime();
-    computeY<<<G, B>>>(pY, pX, pGamma, pBeta, xBar, rVar, vecSize);
-    t[T++] = omp_get_wtime();
+    if (n==0) lbls.push_back("Compute Y");
+    t[q++] = omp_get_wtime();
+    computeY<<<G, B>>>(pY, pX, pgamma, pbeta, xBar, rVar, vecSize);
+    t[q++] = omp_get_wtime();
+    dt[p++] += t[q-1] - t[q-2];
     
     // t[T++] = omp_get_wtime();
     // computeL2<<<G, B>>>(pY, pX, pGamma, pBeta, xBar, rVar, vecSize);
@@ -319,37 +345,40 @@ int main(int argc, char ** argv) {
     // }
     // double t7 = omp_get_wtime();
     // printf("Sum of squared errors in the output vector Y: %g\n", sqrt(l2/vecSize));
+  }
 
-    NT = T/2;
+  const int NT = lbls.size();
+  double DT = 0.0;
+  for (int i=0; i<NT; ++i) {
+    DT += dt[i].mean();
+  }
+  if (verbose > 0) {
     for (int i=0; i<NT; ++i) {
-      dt[i] += t[2*i+1] - t[2*i];
+      printf("%12g %12g %6.2f%% %s\n",
+             dt[i].mean(), dt[i].stdDev(),
+             100*dt[i].mean()/DT, lbls[i].c_str());
     }
-    
+    printf("------------------ ------------------\n");
+    printf("%12g %12s %6.2f%% \t Avg. total execution time\n", DT, "", 100.0);
+    printf("\n");
   }
-
-  // delete [] X;
-  // delete [] Y;
+  else {
+    printf("%12d", vecSize);
+    for (int i=0; i<NT; ++i) {
+      printf("%12g", dt[i].mean());
+    }
+    printf("%12g\n", DT);
+  }
   
-  double dT = 0.0;
+  FILE * fp = NULL;
+  std::ostringstream oss;
+  oss << "v3_" << vecSize << ".dat";
+  fp = fopen(oss.str().c_str(), "w");
+  fprintf(fp, "%12d", vecSize);
   for (int i=0; i<NT; ++i) {
-    dt[i] /= numCycles;
-    dT += dt[i];
+    fprintf(fp, "%12g", dt[i].mean());
   }
+  fclose(fp);
   
-  printf("Execution times (averaged over %d cycles)\n", numCycles);
-  for (int i=0; i<NT; ++i) {
-    printf("%10.4g \t %6.2f%%\n", dt[i], 100*dt[i]/dT);
-  }
-  printf("------------------\n");
-  printf("%10.4g \t %6.2f%% \n", dT, 100.0);
-  printf("\n");
-  
-  printf("%10.4g \t %6.2f%% \t Time to compute mean and variance (and X)\n", dt[0], 100*dt[0]/dT);
-  // printf("%10.4g \t %6.2f%% \t Time to compute output vector (without X)\n", t3-t2, 100*(t3-t2)/(t7-t0));
-  // printf("%10.4g \t %6.2f%% \t Time to compute output vector (with X)\n", t5-t4, 100*(t5-t4)/(t7-t0));
-  // printf("%10.4g \t %6.2f%% \t Time to compute L2 error norm\n", t7-t6, 100*(t7-t6)/(t7-t0));
-  // printf("------------------\n");
-  // printf("%10.4g \t %6.2f%% \t Total execution time\n", t7-t0, 100.0);
-  // printf("\n");
   return 0;
 }
