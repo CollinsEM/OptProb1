@@ -32,7 +32,7 @@ NTHREADS ?= 8
 
 # Execute the targets using default or provided command line options
 # Output is captured in v0.dat, v1.dat, or v3.dat
-v0 v1 v3:
+v0 v1 v3 v4:
 	./foo_$@ $(VERBOSITY) -ncyc $(NCYCLES) -nt $(NTHREADS) -N $(VECSIZE) >> $@.dat
 
 # Execute the targets using default or provided command line options
@@ -40,7 +40,7 @@ v0 v1 v3:
 v2:
 	./foo_$@ $(VERBOSITY) -ncyc $(NCYCLES) -nt $(NTHREADS) -N $(VECSIZE) >> $@_nt$(NTHREADS).dat
 
-run: run_v1 run_v2 run_v3
+run: run_v1 run_v2 run_v3 run_v4
 
 run_v0: foo_v0
 	rm -f v0.dat
@@ -134,6 +134,7 @@ run_v2_nt8: foo_v2
 	NTHREADS=8 VECSIZE=131072 $(MAKE) v2
 	NTHREADS=8 VECSIZE=262144 $(MAKE) v2
 	NTHREADS=8 VECSIZE=524288 $(MAKE) v2
+	NTHREADS=8 VECSIZE=1048576 $(MAKE) v2
 
 run_v3: foo_v3
 	rm -f v3.dat
@@ -151,6 +152,25 @@ run_v3: foo_v3
 	VECSIZE=131072 $(MAKE) v3
 	VECSIZE=262144 $(MAKE) v3
 	VECSIZE=524288 $(MAKE) v3
+	VECSIZE=1048576 $(MAKE) v3
+
+# run_v4: foo_v4
+# 	rm -f v4.dat
+# 	VECSIZE=64 $(MAKE) v4
+# 	VECSIZE=128 $(MAKE) v4
+# 	VECSIZE=256 $(MAKE) v4
+# 	VECSIZE=512 $(MAKE) v4
+# 	VECSIZE=1024 $(MAKE) v4
+# 	VECSIZE=2048 $(MAKE) v4
+# 	VECSIZE=4096 $(MAKE) v4
+# 	VECSIZE=8192 $(MAKE) v4
+# 	VECSIZE=16384 $(MAKE) v4
+# 	VECSIZE=32768 $(MAKE) v4
+# 	VECSIZE=65536 $(MAKE) v4
+# 	VECSIZE=131072 $(MAKE) v4
+# 	VECSIZE=262144 $(MAKE) v4
+# 	VECSIZE=524288 $(MAKE) v4
+# 	VECSIZE=1048576 $(MAKE) v4
 
 ######################################################################
 
@@ -172,8 +192,11 @@ run_v3: foo_v3
 foo_v3: foo_v3.o
 	$(NVCC) $^ -o $@ $(LDLIBS)
 
+foo_v4: foo_v4.o
+	$(NVCC) $^ -o $@ $(LDLIBS)
+
 ######################################################################
 
 -include $(DEPS)
 
-.PHONY: run_v0 v0 v1 run_v1 v2 run_v2 v3 run_v3
+.PHONY: run_v0 v0 v1 run_v1 v2 run_v2 v3 run_v3 v4 run_v4

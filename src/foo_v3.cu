@@ -64,85 +64,15 @@ void computeY(float * Y, const float * X, const float * G, const float * B, floa
   }
 }
 
-#define FULL_MASK 0xffffffff
-__device__
-float reduce_sum(const float x, const int sz) {
-  __shared__ float data[2048];
-  const int gid = threadIdx.x + blockIdx.x*blockDim.x; // global thread ID
-  const int tid  = gid & 0xFF; // gid%32 : warp-local thread ID
-  const int wid  = gid >> 5;   // gid/32 : warp ID
-  // Store partial sum value of x to be reduced.
-  float sum = x;
-  int N = sz;
-  while (N>0) {
-    unsigned mask = __ballot_sync(FULL_MASK, gid<N);
-    // Perform a local reduction over the warp
-    for (int offset=16; offset>0; offset/=2) {
-      sum += __shfl_down_sync(mask, sum, offset);
-      // __syncwarp();
-    }
-    // Store the warp-local partial sums in block-shared memory
-    if (tid == 0) data[wid] = sum;
-    __syncthreads();
-    // Reduce the number of active threads
-    N >>= 5; // N /= 32;
-    // Update the thread-local values to be reduced.
-    sum = (gid < N ? data[gid] : 0.0);
+__global__
+void computeSqErrors(float * dYSq, const float * Y, const float * y, int sz) {
+  const int idx = threadIdx.x + blockIdx.x*blockDim.x;
+  if (idx < sz) {
+    const float delta = (Y[idx] - y[idx]);
+    dYSq[idx] = delta*delta;
   }
-  return data[0];
 }
 
-__global__
-void fusedKernel(float *Y, const float *x, const float *v, const float *b,
-                 const float *gamma, const float *beta, const int sz) {
-  __shared__ float data[2048];
-  const int gid = threadIdx.x + blockIdx.x*blockDim.x; // global thread ID
-  const int tid  = gid & 0xFF; // gid%32 : warp-local thread ID
-  const int wid  = gid >> 5;   // gid/32 : warp ID
-  // Compute the thread-local value of x' = (x + v + b)
-  float xp = (gid<sz ? x[gid] + v[gid] + b[gid] : 0.0);
-  // Store partial sum value of xp/sz to be reduced.
-  float avg = xp/sz;
-  int N = sz;
-  while (N > 0) {
-    unsigned mask = __ballot_sync(FULL_MASK, gid<N);
-    // Perform a local reduction over the warp
-    for (int offset=16; offset>0; offset/=2) {
-      avg += __shfl_down_sync(mask, avg, offset);
-      // __syncwarp();
-    }
-    // Store the warp-local partial sums in block-shared memory
-    if (tid == 0) data[wid] = avg;
-    __syncthreads();
-    // Reduce the number of active threads
-    N >>= 5; // N /= 32;
-    // Update the thread-local values to be reduced.
-    avg = (gid < N ? data[gid] : 0.0);
-  }
-  avg = data[0];
-  float dX = xp - avg;
-  float var = dX*dX/(sz-1);
-  N = sz;
-  while (N > 0) {
-    unsigned mask = __ballot_sync(FULL_MASK, gid<N);
-    // Perform a local reduction over the warp
-    for (int offset=16; offset>0; offset/=2) {
-      var += __shfl_down_sync(mask, var, offset);
-      // __syncwarp();
-    }
-    // Store the warp-local partial sums in block-shared memory
-    if (tid == 0) data[wid] = var;
-    __syncthreads();
-    // Reduce the number of active threads
-    N >>= 5; // N /= 32;
-    // Update the thread-local values to be reduced.
-    var = (gid < N ? data[gid] : 0.0);
-  }
-  float rVar = 1.0/(sqrt(var)+1e-8);
-  if (gid < sz) {
-    Y[gid] = dX*rVar*gamma[gid] + beta[gid];
-  }
-}
 //--------------------------------------------------------------------
 /// Compute x' = x + v + b
 //--------------------------------------------------------------------
@@ -169,9 +99,9 @@ public:
   }
 };
 //--------------------------------------------------------------------
-struct DeltaSquared {
+struct DeltaXSquared {
 public:
-  DeltaSquared(const float xb) {
+  DeltaXSquared(const float xb) {
     cudaMemcpyToSymbol(XBAR, &xb, sizeof(float));
   }
   __device__
@@ -179,9 +109,14 @@ public:
     const float delta = x - XBAR;
     return delta*delta;
   }
+};
+//--------------------------------------------------------------------
+struct DeltaYSquared {
+  typedef thrust::tuple<float,float> VEC2;
+public:
   __device__
-  float operator()(const float & x1, const float x2) const {
-    const float delta = x1 - x2;
+  float operator()(const VEC2 & Y) const {
+    const float delta = thrust::get<0>(Y) - thrust::get<1>(Y);
     return delta*delta;
   }
 };
@@ -317,34 +252,30 @@ int main(int argc, char ** argv) {
 
     if (n==0) lbls.push_back("Compute X-var");
     t[q++] = omp_get_wtime();
-    DeltaSquared deltaSq(xBar);
-    const float sumDeltaSq = thrust::transform_reduce(dX.begin(), dX.end(), deltaSq, 0.0, thrust::plus<float>());
-    const float xVar = sumDeltaSq/(vecSize-1);
+    DeltaXSquared deltaXSq(xBar);
+    const float sumDeltaXSq = thrust::transform_reduce(dX.begin(), dX.end(), deltaXSq, 0.0, thrust::plus<float>());
+    const float xVar = sumDeltaXSq/(vecSize-1);
     const float rVar = 1.0/(sqrt(xVar) + 1e-8);
     t[q++] = omp_get_wtime();
     dt[p++] += t[q-1] - t[q-2];
-    if (verbose > 1 && n == 0) printf("sumDeltaSq: %10.6g, xVar: %10.6g, rVar: %10.6g\n", sumDeltaSq, xVar, rVar);
+    if (verbose > 1 && n == 0) printf("sumDeltaXSq: %10.6g, xVar: %10.6g, rVar: %10.6g\n", sumDeltaXSq, xVar, rVar);
 
-    // thrust::transform(make_zip_iterator(make_tuple(dX.begin(),dGamma.begin(),dBeta.begin())),
-    //                   make_zip_iterator(make_tuple(dX.end(),  dGamma.end(),  dBeta.end())),
-    //                   dY.begin());
     if (n==0) lbls.push_back("Compute Y");
     t[q++] = omp_get_wtime();
     computeY<<<G, B>>>(pY, pX, pgamma, pbeta, xBar, rVar, vecSize);
     t[q++] = omp_get_wtime();
     dt[p++] += t[q-1] - t[q-2];
-    
-    // t[T++] = omp_get_wtime();
-    // computeL2<<<G, B>>>(pY, pX, pGamma, pBeta, xBar, rVar, vecSize);
-    // t[T++] = omp_get_wtime();
-    
-    // double t6 = omp_get_wtime();
-    // for (int i=0; i<vecSize; ++i) {
-    //   float diff = Y[i] - Y[i%N];
-    //   l2 += diff*diff;
-    // }
-    // double t7 = omp_get_wtime();
-    // printf("Sum of squared errors in the output vector Y: %g\n", sqrt(l2/vecSize));
+
+    if (verbose > 0) {
+      if (n == 0) lbls.push_back("Compute L2-errors");
+      t[q++] = omp_get_wtime();
+      float sumDeltaYSq = thrust::transform_reduce( make_zip_iterator(make_tuple(dY.begin(), dy.begin())),
+                                                    make_zip_iterator(make_tuple(dY.end(),   dy.end())),
+                                                    DeltaYSquared(), 0.0f, thrust::plus<float>() );
+      t[q++] = omp_get_wtime();
+      dt[p++] += t[q-1] - t[q-2];
+      if (n == 0) printf("sumDeltaYSq: %10.6g\n", sumDeltaYSq);
+    }
   }
 
   const int NT = lbls.size();
