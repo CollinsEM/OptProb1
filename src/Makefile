@@ -14,8 +14,7 @@ DEPS = $(if $(findstring clean,$(MAKECMDGOALS)),,$(addsuffix .d,$(TARGETS)))
 
 ######################################################################
 
-default:
-	$(MAKE) run
+default: foo_v0 foo_v1 foo_v2 foo_v3
 
 clean:
 	-rm -rf *.o *.d *~
@@ -31,15 +30,20 @@ VECSIZE ?= 8192
 VERBOSITY ?= #+v #+v +v
 NTHREADS ?= 8
 
+# Execute the targets using default or provided command line options
+# Output is captured in v0.dat, v1.dat, or v3.dat
 v0 v1 v3:
-	./foo_$@ $(Verbosity) -ncyc $(NCYCLES) -nt $(NTHREADS) -N $(VECSIZE) >> $@.dat
+	./foo_$@ $(VERBOSITY) -ncyc $(NCYCLES) -nt $(NTHREADS) -N $(VECSIZE) >> $@.dat
 
+# Execute the targets using default or provided command line options
+# Output is captured in v2_nt#.dat.
 v2:
-	./foo_$@ $(Verbosity) -ncyc $(NCYCLES) -nt $(NTHREADS) -N $(VECSIZE) >> $@_nt$(NTHREADS).dat
+	./foo_$@ $(VERBOSITY) -ncyc $(NCYCLES) -nt $(NTHREADS) -N $(VECSIZE) >> $@_nt$(NTHREADS).dat
 
 run: run_v1 run_v2 run_v3
 
 run_v0: foo_v0
+	rm -f v0.dat
 	VECSIZE=64 $(MAKE) v0
 	VECSIZE=256 $(MAKE) v0
 	VECSIZE=1024 $(MAKE) v0
@@ -87,7 +91,7 @@ run_v2_nt4: foo_v2
 	NTHREADS=4 VECSIZE=262144 $(MAKE) v2
 
 run_v2_nt8: foo_v2
-	rm -f v2.dat
+	rm -f v2_nt8.dat
 	NTHREADS=8 VECSIZE=64 $(MAKE) v2
 	NTHREADS=8 VECSIZE=256 $(MAKE) v2
 	NTHREADS=8 VECSIZE=1024 $(MAKE) v2
@@ -98,11 +102,6 @@ run_v2_nt8: foo_v2
 
 run_v3: foo_v3
 	./foo_v3 $(VERBOSITY) -ncyc $(NCYCLES) -N $(VECSIZE)
-
-plot: plot_v1
-
-plot_v1: v1.dat
-	gnuplot --persist v1.dat
 
 ######################################################################
 
@@ -128,4 +127,4 @@ foo_v3: foo_v3.o
 
 -include $(DEPS)
 
-.PHONY: run_v0 v1 run_v1 v2 run_v2 v3 run_v3
+.PHONY: run_v0 v0 v1 run_v1 v2 run_v2 v3 run_v3
