@@ -20,6 +20,14 @@
 //
 // CUDA accelerated implementation
 //
+// Parse command line arguments
+//  * +v : More verbose output
+//  * -v : Less verbose output
+//  * -N <int> : Set size of data array
+//  * -ncyc <int> : Set number of cycles to run
+//
+// Use OpenMP's high-resolution timing. Run multiple cycles to
+// generate average timings.
 __global__
 void computeX(float * X, const float * x, const float * v, const float * b, int N, int sz) {
   const int idx = threadIdx.x + blockIdx.x*blockDim.x;
@@ -92,11 +100,12 @@ float reduce_sum(const float x, const int sz) {
 __global__
 void fusedKernel(float *Y, const float *x, const float *v, const float *b,
                  const float *gamma, const float *beta, const int sz) {
+  __shared__ float data[2048];
   const int gid = threadIdx.x + blockIdx.x*blockDim.x; // global thread ID
   const int tid  = gid & 0xFF; // gid%32 : warp-local thread ID
   const int wid  = gid >> 5;   // gid/32 : warp ID
   // Compute the thread-local value of x' = (x + v + b)
-  float xp = (idx<sz ? x[idx] + v[idx] + b[idx] : 0.0);
+  float xp = (gid<sz ? x[gid] + v[gid] + b[gid] : 0.0);
   // Store partial sum value of xp/sz to be reduced.
   float avg = xp/sz;
   int N = sz;
@@ -134,9 +143,10 @@ void fusedKernel(float *Y, const float *x, const float *v, const float *b,
     // Update the thread-local values to be reduced.
     var = (gid < N ? data[gid] : 0.0);
   }
-  float rVar = 1.0/sqrt
-  Y[idx] = (x[idx] + v[idx] + b[idx] - xBar)*rVar*G[idx] + B[idx];
-  }  
+  float rVar = 1.0/(sqrt(var)+1e-8);
+  if (gid < sz) {
+    Y[gid] = dX*rVar*gamma[gid] + beta[gid];
+  }
 }
 //--------------------------------------------------------------------
 /// Compute x' = x + v + b
@@ -204,7 +214,7 @@ public:
 int main(int argc, char ** argv) {
   int verbosity = 0;
   int vecSize = N;
-  int numThreads = 1;
+  // int numThreads = 1;
   int numCycles = 1;
   // Parse command line arguments
   for (int i=1; i<argc; ++i) {
@@ -213,9 +223,9 @@ int main(int argc, char ** argv) {
       vecSize = atoi( argv[++i] );
     }
     // Specify the number of threads
-    else if (!strcmp(argv[i], "-nt") && (i+1) < argc) {
-      numThreads = atoi( argv[++i] );
-    }
+    // else if (!strcmp(argv[i], "-nt") && (i+1) < argc) {
+    //   numThreads = atoi( argv[++i] );
+    // }
     // Specify the number of cycles to run to average timings
     else if (!strcmp(argv[i], "-ncyc") && (i+1) < argc) {
       numCycles = atoi( argv[++i] );
@@ -234,8 +244,8 @@ int main(int argc, char ** argv) {
   // Report input vector size
   if (verbosity > 0) printf("vecSize:    %d\n", vecSize);
   // Report number of threads
-  if (verbosity > 0) printf("numThreads: %d\n", numThreads);
-  omp_set_num_threads(numThreads);
+  // if (verbosity > 0) printf("numThreads: %d\n", numThreads);
+  // omp_set_num_threads(numThreads);
   
   const float eps = 1e-5;
   
