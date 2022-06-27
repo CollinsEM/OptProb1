@@ -20,7 +20,7 @@ clean:
 	-rm -rf *.o *.d *~
 
 distclean: clean
-	-rm -rf $(TARGETS) *.dat
+	-rm -rf $(TARGETS) *.dat data
 
 ######################################################################
 
@@ -30,17 +30,20 @@ VECSIZE ?= 8192
 VERBOSITY ?= #+v #+v +v
 NTHREADS ?= 8
 
+data:
+	mkdir -p data
+
 # Execute the targets using default or provided command line options
 # Output is captured in v0.dat, v1.dat, or v3.dat
-v0 v1 v3 v4:
-	./foo_$@ $(VERBOSITY) -ncyc $(NCYCLES) -nt $(NTHREADS) -N $(VECSIZE) >> $@.dat
+v0 v1 v3 v4: data
+	./foo_$@ $(VERBOSITY) -ncyc $(NCYCLES) -nt $(NTHREADS) -N $(VECSIZE) >> data/$@.dat
 
 # Execute the targets using default or provided command line options
 # Output is captured in v2_nt#.dat.
-v2:
-	./foo_$@ $(VERBOSITY) -ncyc $(NCYCLES) -nt $(NTHREADS) -N $(VECSIZE) >> $@_nt$(NTHREADS).dat
+v2: data
+	./foo_$@ $(VERBOSITY) -ncyc $(NCYCLES) -nt $(NTHREADS) -N $(VECSIZE) >> data/$@_nt$(NTHREADS).dat
 
-run: run_v1 run_v2 run_v3 run_v4
+run: run_v1 run_v2 run_v3 #run_v4
 
 run_v0: foo_v0
 	rm -f v0.dat
@@ -49,7 +52,7 @@ run_v0: foo_v0
 	VECSIZE=1024 $(MAKE) v0
 
 run_v1: foo_v1
-	rm -f v1.dat
+	rm -f data/v1.dat
 	VECSIZE=64 $(MAKE) v1
 	VECSIZE=128 $(MAKE) v1
 	VECSIZE=256 $(MAKE) v1
@@ -64,11 +67,12 @@ run_v1: foo_v1
 	VECSIZE=131072 $(MAKE) v1
 	VECSIZE=262144 $(MAKE) v1
 	VECSIZE=524288 $(MAKE) v1
+	VECSIZE=1048576 $(MAKE) v1
 
 run_v2: run_v2_nt1 run_v2_nt2 run_v2_nt4 run_v2_nt8
 
 run_v2_nt1: foo_v2
-	rm -f v2_nt1.dat
+	rm -f data/v2_nt1.dat
 	NTHREADS=1 VECSIZE=64 $(MAKE) v2
 	NTHREADS=1 VECSIZE=128 $(MAKE) v2
 	NTHREADS=1 VECSIZE=256 $(MAKE) v2
@@ -83,9 +87,10 @@ run_v2_nt1: foo_v2
 	NTHREADS=1 VECSIZE=131072 $(MAKE) v2
 	NTHREADS=1 VECSIZE=262144 $(MAKE) v2
 	NTHREADS=1 VECSIZE=524288 $(MAKE) v2
+	NTHREADS=1 VECSIZE=1048576 $(MAKE) v2
 
 run_v2_nt2: foo_v2
-	rm -f v2_nt2.dat
+	rm -f data/v2_nt2.dat
 	NTHREADS=2 VECSIZE=64 $(MAKE) v2
 	NTHREADS=2 VECSIZE=128 $(MAKE) v2
 	NTHREADS=2 VECSIZE=256 $(MAKE) v2
@@ -100,9 +105,10 @@ run_v2_nt2: foo_v2
 	NTHREADS=2 VECSIZE=131072 $(MAKE) v2
 	NTHREADS=2 VECSIZE=262144 $(MAKE) v2
 	NTHREADS=2 VECSIZE=524288 $(MAKE) v2
+	NTHREADS=2 VECSIZE=1048576 $(MAKE) v2
 
 run_v2_nt4: foo_v2
-	rm -f v2_nt4.dat
+	rm -f data/v2_nt4.dat
 	NTHREADS=4 VECSIZE=64 $(MAKE) v2
 	NTHREADS=4 VECSIZE=128 $(MAKE) v2
 	NTHREADS=4 VECSIZE=256 $(MAKE) v2
@@ -117,9 +123,10 @@ run_v2_nt4: foo_v2
 	NTHREADS=4 VECSIZE=131072 $(MAKE) v2
 	NTHREADS=4 VECSIZE=262144 $(MAKE) v2
 	NTHREADS=4 VECSIZE=524288 $(MAKE) v2
+	NTHREADS=4 VECSIZE=1048576 $(MAKE) v2
 
 run_v2_nt8: foo_v2
-	rm -f v2_nt8.dat
+	rm -f data/v2_nt8.dat
 	NTHREADS=8 VECSIZE=64 $(MAKE) v2
 	NTHREADS=8 VECSIZE=128 $(MAKE) v2
 	NTHREADS=8 VECSIZE=256 $(MAKE) v2
@@ -137,7 +144,7 @@ run_v2_nt8: foo_v2
 	NTHREADS=8 VECSIZE=1048576 $(MAKE) v2
 
 run_v3: foo_v3
-	rm -f v3.dat
+	rm -f data/v3.dat
 	VECSIZE=64 $(MAKE) v3
 	VECSIZE=128 $(MAKE) v3
 	VECSIZE=256 $(MAKE) v3
@@ -155,7 +162,7 @@ run_v3: foo_v3
 	VECSIZE=1048576 $(MAKE) v3
 
 # run_v4: foo_v4
-# 	rm -f v4.dat
+# 	rm -f data/v4.dat
 # 	VECSIZE=64 $(MAKE) v4
 # 	VECSIZE=128 $(MAKE) v4
 # 	VECSIZE=256 $(MAKE) v4

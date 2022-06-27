@@ -165,7 +165,7 @@ int main(int argc, char ** argv) {
   
   FILE * fp = NULL;
   std::ostringstream oss;
-  oss << "v1_" << vecSize << ".dat";
+  oss << "data/v1_" << vecSize << ".dat";
   fp = fopen(oss.str().c_str(), "w");
   fprintf(fp, "%12d", vecSize);
   for (int i=0; i<NT; ++i) {
