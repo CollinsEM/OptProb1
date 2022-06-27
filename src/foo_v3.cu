@@ -18,13 +18,10 @@
 
 // Version 0.3
 //
-// First attempt at using AVX intrinsics
+// CUDA accelerated implementation
 //
-
-typedef float real;
-
 __global__
-void computeX(real * X, const real * x, const real * v, const real * b, int N, int sz) {
+void computeX(float * X, const float * x, const float * v, const float * b, int N, int sz) {
   const int idx = threadIdx.x + blockIdx.x*blockDim.x;
   if (idx < sz) {
     X[idx] = x[idx%N] + v[idx%N] + b[idx%N];
@@ -32,7 +29,7 @@ void computeX(real * X, const real * x, const real * v, const real * b, int N, i
 }
 
 __global__
-void duplicate(real * X, const real * x, int N, int sz) {
+void duplicate(float * X, const float * x, int N, int sz) {
   const int idx = threadIdx.x + blockIdx.x*blockDim.x;
   if (idx < sz) {
     X[idx] = x[idx%N];
@@ -40,7 +37,7 @@ void duplicate(real * X, const real * x, int N, int sz) {
 }
 
 __global__
-void computeDelta(real * delta, real * X, real E, int sz) {
+void computeDelta(float * delta, float * X, float E, int sz) {
   const int idx = threadIdx.x + blockIdx.x*blockDim.x;
   if (idx < sz) {
     delta[idx] = X[idx%N] - E;
@@ -48,61 +45,138 @@ void computeDelta(real * delta, real * X, real E, int sz) {
 }
 
 __global__
-void computeDeltaSquared(real * dSq, real * X, real E, int sz) {
+void computeDeltaSquared(float * dSq, float * X, float E, int sz) {
   const int idx = threadIdx.x + blockIdx.x*blockDim.x;
   if (idx < sz) {
-    const real delta = X[idx] - E;
+    const float delta = X[idx] - E;
     dSq[idx] = delta*delta;
   }
 }
 
 __global__
-void computeY(real * Y, const real * X, const real * G, const real * B, real xBar, real rVar, int sz) {
+void computeY(float * Y, const float * X, const float * G, const float * B, float xBar, float rVar, int sz) {
   const int idx = threadIdx.x + blockIdx.x*blockDim.x;
   if (idx < sz) {
     Y[idx] = (X[idx] - xBar)*rVar*G[idx] + B[idx];
   }
 }
 
+#define FULL_MASK 0xffffffff
+__device__
+float reduce_sum(const float x, const int sz) {
+  __shared__ float data[2048];
+  const int gid = threadIdx.x + blockIdx.x*blockDim.x; // global thread ID
+  const int tid  = gid & 0xFF; // gid%32 : warp-local thread ID
+  const int wid  = gid >> 5;   // gid/32 : warp ID
+  // Store partial sum value of x to be reduced.
+  float sum = x;
+  int N = sz;
+  while (N>0) {
+    unsigned mask = __ballot_sync(FULL_MASK, gid<N);
+    // Perform a local reduction over the warp
+    for (int offset=16; offset>0; offset/=2) {
+      sum += __shfl_down_sync(mask, sum, offset);
+      // __syncwarp();
+    }
+    // Store the warp-local partial sums in block-shared memory
+    if (tid == 0) data[wid] = sum;
+    __syncthreads();
+    // Reduce the number of active threads
+    N >>= 5; // N /= 32;
+    // Update the thread-local values to be reduced.
+    sum = (gid < N ? data[gid] : 0.0);
+  }
+  return data[0];
+}
+
+__global__
+void fusedKernel(float *Y, const float *x, const float *v, const float *b,
+                 const float *gamma, const float *beta, const int sz) {
+  const int gid = threadIdx.x + blockIdx.x*blockDim.x; // global thread ID
+  const int tid  = gid & 0xFF; // gid%32 : warp-local thread ID
+  const int wid  = gid >> 5;   // gid/32 : warp ID
+  // Compute the thread-local value of x' = (x + v + b)
+  float xp = (idx<sz ? x[idx] + v[idx] + b[idx] : 0.0);
+  // Store partial sum value of xp/sz to be reduced.
+  float avg = xp/sz;
+  int N = sz;
+  while (N > 0) {
+    unsigned mask = __ballot_sync(FULL_MASK, gid<N);
+    // Perform a local reduction over the warp
+    for (int offset=16; offset>0; offset/=2) {
+      avg += __shfl_down_sync(mask, avg, offset);
+      // __syncwarp();
+    }
+    // Store the warp-local partial sums in block-shared memory
+    if (tid == 0) data[wid] = avg;
+    __syncthreads();
+    // Reduce the number of active threads
+    N >>= 5; // N /= 32;
+    // Update the thread-local values to be reduced.
+    avg = (gid < N ? data[gid] : 0.0);
+  }
+  avg = data[0];
+  float dX = xp - avg;
+  float var = dX*dX/(sz-1);
+  N = sz;
+  while (N > 0) {
+    unsigned mask = __ballot_sync(FULL_MASK, gid<N);
+    // Perform a local reduction over the warp
+    for (int offset=16; offset>0; offset/=2) {
+      var += __shfl_down_sync(mask, var, offset);
+      // __syncwarp();
+    }
+    // Store the warp-local partial sums in block-shared memory
+    if (tid == 0) data[wid] = var;
+    __syncthreads();
+    // Reduce the number of active threads
+    N >>= 5; // N /= 32;
+    // Update the thread-local values to be reduced.
+    var = (gid < N ? data[gid] : 0.0);
+  }
+  float rVar = 1.0/sqrt
+  Y[idx] = (x[idx] + v[idx] + b[idx] - xBar)*rVar*G[idx] + B[idx];
+  }  
+}
 //--------------------------------------------------------------------
 /// Compute x' = x + v + b
 //--------------------------------------------------------------------
-typedef thrust::tuple<real,real,real> VEC3;
+typedef thrust::tuple<float,float,float> VEC3;
 //--------------------------------------------------------------------
-struct ComputeX : public thrust::unary_function<VEC3, real> {
+struct ComputeX : public thrust::unary_function<VEC3, float> {
 public:
   __device__
-  real operator()(const VEC3 & xvb) const {
+  float operator()(const VEC3 & xvb) const {
     return (thrust::get<0>(xvb) + thrust::get<1>(xvb) + thrust::get<2>(xvb));
   }
 };
 //--------------------------------------------------------------------
-__constant__ real XBAR;
+__constant__ float XBAR;
 //--------------------------------------------------------------------
-struct Delta : public thrust::unary_function<real, real> {
+struct Delta : public thrust::unary_function<float, float> {
 public:
-  Delta(const real xb) {
-    cudaMemcpyToSymbol(XBAR, &xb, sizeof(real));
+  Delta(const float xb) {
+    cudaMemcpyToSymbol(XBAR, &xb, sizeof(float));
   }
   __device__
-  real operator()(const real & x) const {
+  float operator()(const float & x) const {
     return x - XBAR;
   }
 };
 //--------------------------------------------------------------------
 struct DeltaSquared {
 public:
-  DeltaSquared(const real xb) {
-    cudaMemcpyToSymbol(XBAR, &xb, sizeof(real));
+  DeltaSquared(const float xb) {
+    cudaMemcpyToSymbol(XBAR, &xb, sizeof(float));
   }
   __device__
-  real operator()(const real & x) const {
-    const real delta = x - XBAR;
+  float operator()(const float & x) const {
+    const float delta = x - XBAR;
     return delta*delta;
   }
   __device__
-  real operator()(const real & x1, const real x2) const {
-    const real delta = x1 - x2;
+  float operator()(const float & x1, const float x2) const {
+    const float delta = x1 - x2;
     return delta*delta;
   }
 };
@@ -110,19 +184,19 @@ public:
 //--------------------------------------------------------------------
 /// Compute Y = (x' - xbar)/sqrt(var
 //--------------------------------------------------------------------
-__constant__ real XVAR;
-__constant__ real rVAR;
+__constant__ float XVAR;
+__constant__ float rVAR;
 //--------------------------------------------------------------------
-struct ComputeY : public thrust::unary_function<real, real> {
+struct ComputeY : public thrust::unary_function<float, float> {
 public:
-  ComputeY(const real xb, const real xv) {
-    cudaMemcpyToSymbol(XBAR, &xb, sizeof(real));
-    cudaMemcpyToSymbol(XVAR, &xv, sizeof(real));
-    const real rV = 1.0/(sqrt(xv) + 1e-5);
-    cudaMemcpyToSymbol(rVAR, &rV, sizeof(real));
+  ComputeY(const float xb, const float xv) {
+    cudaMemcpyToSymbol(XBAR, &xb, sizeof(float));
+    cudaMemcpyToSymbol(XVAR, &xv, sizeof(float));
+    const float rV = 1.0/(sqrt(xv) + 1e-5);
+    cudaMemcpyToSymbol(rVAR, &rV, sizeof(float));
   }
   __device__
-  real operator()(const VEC3 & v3) const {
+  float operator()(const VEC3 & v3) const {
     return (thrust::get<0>(v3) - XBAR)*rVAR*thrust::get<1>(v3) + thrust::get<2>(v3);
   }
 };
@@ -163,7 +237,7 @@ int main(int argc, char ** argv) {
   if (verbosity > 0) printf("numThreads: %d\n", numThreads);
   omp_set_num_threads(numThreads);
   
-  const real eps = 1e-5;
+  const float eps = 1e-5;
   
   // Array for recording time-stamps
   int NT = 5;
@@ -176,18 +250,18 @@ int main(int argc, char ** argv) {
   const dim3 G((vecSize+1023)/1024);
   const dim3 B(min(1024,vecSize));
   // Load and cache the input vector x' = x + v + b
-  thrust::device_vector<real> dx(N), dy(N), dv(N), db(N), dgamma(N), dbeta(N);
-  real * px = thrust::raw_pointer_cast(dx.data());
-  real * py = thrust::raw_pointer_cast(dy.data());
-  real * pv = thrust::raw_pointer_cast(dv.data());
-  real * pb = thrust::raw_pointer_cast(db.data());
-  real * pgamma = thrust::raw_pointer_cast(dgamma.data());
-  real * pbeta = thrust::raw_pointer_cast(dbeta.data());
-  thrust::device_vector<real> dX(vecSize), dY(vecSize), dGamma(vecSize), dBeta(vecSize);
-  real * pX = thrust::raw_pointer_cast(dX.data());
-  real * pY = thrust::raw_pointer_cast(dY.data());
-  real * pGamma = thrust::raw_pointer_cast(dGamma.data());
-  real * pBeta = thrust::raw_pointer_cast(dBeta.data());
+  thrust::device_vector<float> dx(N), dy(N), dv(N), db(N), dgamma(N), dbeta(N);
+  float * px = thrust::raw_pointer_cast(dx.data());
+  float * py = thrust::raw_pointer_cast(dy.data());
+  float * pv = thrust::raw_pointer_cast(dv.data());
+  float * pb = thrust::raw_pointer_cast(db.data());
+  float * pgamma = thrust::raw_pointer_cast(dgamma.data());
+  float * pbeta = thrust::raw_pointer_cast(dbeta.data());
+  thrust::device_vector<float> dX(vecSize), dY(vecSize), dGamma(vecSize), dBeta(vecSize);
+  float * pX = thrust::raw_pointer_cast(dX.data());
+  float * pY = thrust::raw_pointer_cast(dY.data());
+  float * pGamma = thrust::raw_pointer_cast(dGamma.data());
+  float * pBeta = thrust::raw_pointer_cast(dBeta.data());
   // Copy over the first N data points
   thrust::copy(x_test, x_test+N, dx.begin());
   thrust::copy(Y_test, Y_test+N, dy.begin());
@@ -204,16 +278,16 @@ int main(int argc, char ** argv) {
     t[T++] = omp_get_wtime();
   
     t[T++] = omp_get_wtime();
-    const real xSum = thrust::reduce(dX.begin(), dX.end());
-    const real xBar = xSum/vecSize;
+    const float xSum = thrust::reduce(dX.begin(), dX.end());
+    const float xBar = xSum/vecSize;
     t[T++] = omp_get_wtime();
     if (verbosity > 1 && n == 0) printf("xSum: %10.6g, xBar: %10.6g\n", xSum, xBar);
 
     t[T++] = omp_get_wtime();
     DeltaSquared deltaSq(xBar);
-    const real sumDeltaSq = thrust::transform_reduce(dX.begin(), dX.end(), deltaSq, 0.0, thrust::plus<real>());
-    const real xVar = sumDeltaSq/(vecSize-1);
-    const real rVar = 1.0/(sqrt(xVar) + eps);
+    const float sumDeltaSq = thrust::transform_reduce(dX.begin(), dX.end(), deltaSq, 0.0, thrust::plus<float>());
+    const float xVar = sumDeltaSq/(vecSize-1);
+    const float rVar = 1.0/(sqrt(xVar) + eps);
     t[T++] = omp_get_wtime();
     if (verbosity > 1 && n == 0) printf("sumDeltaSq: %10.6g, xVar: %10.6g, rVar: %10.6g\n", sumDeltaSq, xVar, rVar);
 
@@ -228,12 +302,12 @@ int main(int argc, char ** argv) {
     // computeL2<<<G, B>>>(pY, pX, pGamma, pBeta, xBar, rVar, vecSize);
     // t[T++] = omp_get_wtime();
     
-    // real t6 = omp_get_wtime();
+    // double t6 = omp_get_wtime();
     // for (int i=0; i<vecSize; ++i) {
-    //   real diff = Y[i] - Y[i%N];
+    //   float diff = Y[i] - Y[i%N];
     //   l2 += diff*diff;
     // }
-    // real t7 = omp_get_wtime();
+    // double t7 = omp_get_wtime();
     // printf("Sum of squared errors in the output vector Y: %g\n", sqrt(l2/vecSize));
 
     NT = T/2;

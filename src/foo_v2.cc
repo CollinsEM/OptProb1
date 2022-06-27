@@ -1,10 +1,13 @@
-Ve#include <cstdio>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
+#include <sstream>
+#include <vector>
 
 #include <omp.h>
 
-#include <test_inputs.h>
+#include <TestVec.h>
 #include <emc_utils.h>
 
 // Version 0.2
@@ -23,7 +26,7 @@ Ve#include <cstdio>
 // generate average timings.
 int main(int argc, char ** argv) {
   int verbose = 0;
-  int vecSize = N;
+  int vecSize = 64;
   int numThreads = 1;
   int numCycles = 1;
   // Parse command line arguments
@@ -56,15 +59,13 @@ int main(int argc, char ** argv) {
   if (verbose > 0) printf("numThreads: %d\n", numThreads);
   omp_set_num_threads(numThreads);
   
-  const real eps = 1e-5;
-  
   int nt;
   // Time stamps
   double t[32];
   // Keep a running average of the elapsed times
   OnlineAverage<double> dt[16];
   // Array of output strings
-  std::string lbls[16];
+  std::vector<std::string> lbls;
 
   // Generate random test vectors
   TestVec<float> x(vecSize, 0.0, 10.0);
@@ -94,162 +95,90 @@ int main(int argc, char ** argv) {
     // computing avg & var so that it's easier to see any latency due to
     // the initial load of data values.
   
-    // Cache the input vector x' = x + v + b
-    t[T++] = omp_get_wtime();
+    if (n==0) lbls.push_back("Compute X, xAvg");
+    t[q++] = omp_get_wtime();
+    // Compute the sum of all x' values
+    sumX = 0.0;
 #pragma omp parallel for
     for (int i=0; i<vecSize; ++i) {
-      X[i] = x_test[i%N] + v_test[i%N] + b_test[i%N];
+      X[i] = x[i] + v[i] + b[i];
+      sumX += X[i];
     }
-    t[T++] = omp_get_wtime();
-    if (verbose > 0 && n==0) printf("%15.10f \t Time to compute x' = x + v + b.\n", t[T-1]-t[T-2]);
+    // Compute the average of x'
+    avgX = sumX/vecSize;
+    t[q++] = omp_get_wtime();
+    dt[p++] += t[q-1] - t[q-2];
 
-    real avg, var;
-    if (!parAvg) {
-      // This is a running-average calculator that I wrote a while
-      // back. I typically use it when reading in a lot of data from a
-      // file or a stream without having to store every value. It also
-      // uses a variation on Kahan's summation method to reduce
-      // truncation errors which accumulate when averaging very large
-      // lists of numbers (i.e. when the sum begins to diverge from the
-      // data values by more than a few orders of magnitude).
-      //
-      // NOTE: This algorithm has not yet been parallelized, so we'll
-      // just handle it serially for now.
-      OnlineAverage<real> xAvg;
-      t[T++] = omp_get_wtime();
-      for (int i=0; i<vecSize; ++i) {
-        xAvg += X[i];
-      }
-      t[T++] = omp_get_wtime();
-      avg = xAvg.mean();
-      var = xAvg.variance();
-      if (verbose > 0 && n==0) {
-        printf("%15.10f \t Time to compute mean and variance (serial).\n", t[T-1]-t[T-2]);
-      }
+    if (n==0) lbls.push_back("Compute dX, xVar");
+    t[q++] = omp_get_wtime();
+    // Compute the variance of x'
+    sumDX = 0.0;
+#pragma omp parallel for reduction(+ : sumDX)
+    for (int i=0; i<vecSize; ++i) {
+      dX[i] = X[i] - avgX;
+      sumDX += dX[i]*dX[i];
     }
-    else {
-      // Compute the mean
-      real sum = 0.0;
-      t[T++] = omp_get_wtime();
-#pragma omp parallel for reduction(+ : sum)
-      for (int i=0; i<vecSize; ++i) {
-        sum += X[i];
-      }
-      if (verbose > 2 && n == 0) printf("sum: %f\n", sum);
-      avg = sum / vecSize;
-      
-      // Compute the variance
-      real d, dSq = 0.0;
-#pragma omp parallel for reduction(+ : dSq)
-      for (int i=0; i<vecSize; ++i) {
-        d = X[i] - avg;
-        dSq += d*d;
-      }
-      var = dSq/(vecSize-1);
-      t[T++] = omp_get_wtime();
-      
-      if (verbose > 1 && n==0) {
-        printf("OpenMP:\n");
-        printf("sum: %f\n", sum);
-        printf("avg: %f\n", avg);
-        printf("var: %f\n", var);
-        // Verify OpenMP parallel reduce
-        sum = 0.0;
-        for (int i=0; i<vecSize; ++i) {
-          sum += X[i];
-        }
-        avg = sum / vecSize;
-        
-        dSq = 0.0;
-        for (int i=0; i<vecSize; ++i) {
-          d = X[i] - avg;
-          dSq += d*d;
-        }
-        var = dSq/(vecSize-1);
-        
-        printf("Serial:\n");
-        printf("sum: %f\n", sum);
-        printf("avg: %f\n", avg);
-        printf("var: %f\n", var);
-      }
-      if (verbose > 0 && n==0) {
-        printf("%15.10f \t Time to compute mean and variance (OpenMP).\n", t[T-1]-t[T-2]);
-      }
-    }
-    if (verbose > 1 && n==0) {
-      printf("x-avg: %f\n", avg);
-      printf("x-var: %f\n", var);
-    }
-  
-    // Save values for computing Y
-    const real E  = avg;
-    const real rV = 1.0/(sqrt(var) + eps);
-    
-//     t[T++] = omp_get_wtime();
-// #pragma omp parallel for
-//     for (int i=0; i<vecSize; ++i) {
-//       Y[i] = (x_test[i%N] + v_test[i%N] + b_test[i%N] - E)*gamma_test[i%N]*rV + beta_test[i%N];
-//     }
-//     t[T++] = omp_get_wtime();
-//     if (verbose > 0 && n==0) {
-//       printf("%15.10f \t Time to compute Y from x, v, and b.\n", t[T-1]-t[T-2]);
-//     }
-  
-    t[T++] = omp_get_wtime();
+    varX = sumDX/(vecSize-1);
+    rVar = 1.0/(sqrt(varX)+1e-8);
+    t[q++] = omp_get_wtime();
+    dt[p++] += t[q-1] - t[q-2];
+    dXSq += sumDX;
+
+    if (n==0) lbls.push_back("Compute Y");
+    t[q++] = omp_get_wtime();
 #pragma omp parallel for
     for (int i=0; i<vecSize; ++i) {
-      Y[i] = (X[i] - E)*gamma_test[i%N]*rV + beta_test[i%N];
+      Y[i] = dX[i]*gamma[i]*rVar + beta[i];
     }
-    t[T++] = omp_get_wtime();
-    if (verbose > 0 && n==0) {
-      printf("%15.10f \t Time to compute Y from x'.\n", t[T-1]-t[T-2]);
-    }
+    t[q++] = omp_get_wtime();
+    dt[p++] += t[q-1] - t[q-2];
     
-    real l2 = 0.0;
-    t[T++] = omp_get_wtime();
-#pragma omp parallel for reduction(+ : l2)
+    if (n==0) lbls.push_back("Compute Errors");
+    t[q++] = omp_get_wtime();
+    // Compute errors in Y
+    sumDY = 0.0;
+#pragma omp parallel for reduction(+ : sumDY)
     for (int i=0; i<vecSize; ++i) {
-      real diff = Y[i] - Y_test[i%N];
-      l2 += diff*diff;
+      dY = Y[i] - y[i];
+      sumDY += dY*dY;
     }
-    const real L2 = sqrt(l2/vecSize);
-    t[T++] = omp_get_wtime();
-    if (verbose > 0 && n==0) {
-      printf("%15.10f \t Time to compute L2 error for Y.\n", t[T-1]-t[T-2]);
-    }
-    if (n==0) {
-      printf("Sum of squared errors in the output vector Y: %10.6g.\n", L2);
-    }
-    
-    NT = T/2;
+    t[q++] = omp_get_wtime();
+    dt[p++] += t[q-1] - t[q-2];
+    dYSq += sumDY;
+  }
+
+  const int NT = lbls.size();
+  double DT = 0.0;
+  for (int i=0; i<NT; ++i) {
+    DT += dt[i].mean();
+  }
+  if (verbose > 0) {
     for (int i=0; i<NT; ++i) {
-      dt[i] += t[2*i+1] - t[2*i];
+      printf("%12g %12g %6.2f%% %s\n",
+             dt[i].mean(), dt[i].stdDev(),
+             100*dt[i].mean()/DT, lbls[i].c_str());
     }
+    printf("------------------ ------------------\n");
+    printf("%12g %12s %6.2f%% \t Avg. total execution time\n", DT, "", 100.0);
+    printf("\n");
   }
-  
-  delete [] X;
-  delete [] Y;
-
-  double dT = 0.0;
-  for (int i=0; i<NT; ++i) {
-    dt[i] /= numCycles;
-    dT += dt[i];
-  }
-  
-  printf("Execution times (averaged over %d cycles)\n", numCycles);
-  for (int i=0; i<NT; ++i) {
-    printf("%10.4g \t %6.2f%%\n", dt[i], 100*dt[i]/dT);
-  }
-  printf("------------------\n");
-  printf("%10.4g \t %6.2f%% \n", dT, 100.0);
-  printf("\n");
-  
-  if (verbose > 1) {
-    printf("t[%2d]: %20.10f\n", 0, t[0]);
-    for (int i=1; i<2*NT; ++i) {
-      printf("t[%2d]: %20.10f  %15.6g  %15.6g\n", i, t[i], t[i]-t[i-1], t[i]-t[0]);
+  else {
+    printf("%12d", vecSize);
+    for (int i=0; i<NT; ++i) {
+      printf("%12g", dt[i].mean());
     }
+    printf("%12g\n", DT);
   }
+  
+  FILE * fp = NULL;
+  std::ostringstream oss;
+  oss << "v2_nt" << numThreads << "_" << vecSize << ".dat";
+  fp = fopen(oss.str().c_str(), "w");
+  fprintf(fp, "%12d", vecSize);
+  for (int i=0; i<NT; ++i) {
+    fprintf(fp, "%12g", dt[i].mean());
+  }
+  fclose(fp);
   
   return 0;
 }

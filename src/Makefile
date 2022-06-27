@@ -7,11 +7,11 @@ LDLIBS += -lgomp
 GENCODE_FLAGS = -gencode -arch=compute_61,code=sm_61
 NVCC_FLAGS    = $(OPT) -m64 $(GENCODE_FLAGS) -lineinfo -Xcompiler -fopenmp #-fmad=false
 
-SRCS = $(wildcard *.cc)
-OBJS = $(SRCS:%.cc=%.o)
-DEPS = $(if $(findstring clean,$(MAKECMDGOALS)),,$(SRCS:%.cc=%.d))
+SRCS = $(wildcard *.cc) #$(wildcard *.cu)
+TARGETS = $(basename $(SRCS))
+OBJS = $(addsuffix .o,$(TARGETS))
+DEPS = $(if $(findstring clean,$(MAKECMDGOALS)),,$(addsuffix .d,$(TARGETS)))
 
-TARGETS = $(SRCS:%.cc=%)
 ######################################################################
 
 default:
@@ -21,42 +21,88 @@ clean:
 	-rm -rf *.o *.d *~
 
 distclean: clean
-	-rm -rf $(TARGETS)
+	-rm -rf $(TARGETS) *.dat
 
 ######################################################################
 
-NCYCLES = 1000
-VECSIZE = 8192
-VERBOSITY = #+v #+v +v
-NTHREADS = 8
+EXEC ?= foo_v0
+NCYCLES ?= 1000
+VECSIZE ?= 8192
+VERBOSITY ?= #+v #+v +v
+NTHREADS ?= 8
+
+v0 v1 v3:
+	./foo_$@ $(Verbosity) -ncyc $(NCYCLES) -nt $(NTHREADS) -N $(VECSIZE) >> $@.dat
+
+v2:
+	./foo_$@ $(Verbosity) -ncyc $(NCYCLES) -nt $(NTHREADS) -N $(VECSIZE) >> $@_nt$(NTHREADS).dat
 
 run: run_v1 run_v2 run_v3
 
 run_v0: foo_v0
-	./foo_v0 -N $(NCYCLES)
-	./foo_v0 -N 32
-	./foo_v0 -N 64
-	./foo_v0 -N 512
-	./foo_v0 -N 4096
-	./foo_v0 -N 32768
-	./foo_v0 -N 262144
+	VECSIZE=64 $(MAKE) v0
+	VECSIZE=256 $(MAKE) v0
+	VECSIZE=1024 $(MAKE) v0
 
 run_v1: foo_v1
-#	./foo_v1 $(VERBOSITY) -ncyc $(NCYCLES) -N $(VECSIZE)
-	./foo_v1 $(VERBOSITY) -ncyc $(NCYCLES) -N 64
-	./foo_v1 $(VERBOSITY) -ncyc $(NCYCLES) -N 4096
-	./foo_v1 $(VERBOSITY) -ncyc $(NCYCLES) -N 32768
-	./foo_v1 $(VERBOSITY) -ncyc $(NCYCLES) -N 262144
+	rm -f v1.dat
+	VECSIZE=64 $(MAKE) v1
+	VECSIZE=256 $(MAKE) v1
+	VECSIZE=1024 $(MAKE) v1
+	VECSIZE=4096 $(MAKE) v1
+	VECSIZE=16384 $(MAKE) v1
+	VECSIZE=65536 $(MAKE) v1
+	VECSIZE=262144 $(MAKE) v1
 
-run_v2: foo_v2
-#	./foo_v2 $(VERBOSITY) -ncyc $(NCYCLES) -N $(VECSIZE) -nt $(NTHREADS)
-	./foo_v2 $(VERBOSITY) -ncyc $(NCYCLES) -N $(VECSIZE) -nt 1 -pavg
-	./foo_v2 $(VERBOSITY) -ncyc $(NCYCLES) -N $(VECSIZE) -nt 2 -pavg
-	./foo_v2 $(VERBOSITY) -ncyc $(NCYCLES) -N $(VECSIZE) -nt 4 -pavg
-	./foo_v2 $(VERBOSITY) -ncyc $(NCYCLES) -N $(VECSIZE) -nt 8 -pavg
+run_v2: run_v2_nt1 run_v2_nt2 run_v2_nt4 run_v2_nt8
+
+run_v2_nt1: foo_v2
+	rm -f v2_nt1.dat
+	NTHREADS=1 VECSIZE=64 $(MAKE) v2
+	NTHREADS=1 VECSIZE=256 $(MAKE) v2
+	NTHREADS=1 VECSIZE=1024 $(MAKE) v2
+	NTHREADS=1 VECSIZE=4096 $(MAKE) v2
+	NTHREADS=1 VECSIZE=16384 $(MAKE) v2
+	NTHREADS=1 VECSIZE=65536 $(MAKE) v2
+	NTHREADS=1 VECSIZE=262144 $(MAKE) v2
+
+run_v2_nt2: foo_v2
+	rm -f v2_nt2.dat
+	NTHREADS=2 VECSIZE=64 $(MAKE) v2
+	NTHREADS=2 VECSIZE=256 $(MAKE) v2
+	NTHREADS=2 VECSIZE=1024 $(MAKE) v2
+	NTHREADS=2 VECSIZE=4096 $(MAKE) v2
+	NTHREADS=2 VECSIZE=16384 $(MAKE) v2
+	NTHREADS=2 VECSIZE=65536 $(MAKE) v2
+	NTHREADS=2 VECSIZE=262144 $(MAKE) v2
+
+run_v2_nt4: foo_v2
+	rm -f v2_nt4.dat
+	NTHREADS=4 VECSIZE=64 $(MAKE) v2
+	NTHREADS=4 VECSIZE=256 $(MAKE) v2
+	NTHREADS=4 VECSIZE=1024 $(MAKE) v2
+	NTHREADS=4 VECSIZE=4096 $(MAKE) v2
+	NTHREADS=4 VECSIZE=16384 $(MAKE) v2
+	NTHREADS=4 VECSIZE=65536 $(MAKE) v2
+	NTHREADS=4 VECSIZE=262144 $(MAKE) v2
+
+run_v2_nt8: foo_v2
+	rm -f v2.dat
+	NTHREADS=8 VECSIZE=64 $(MAKE) v2
+	NTHREADS=8 VECSIZE=256 $(MAKE) v2
+	NTHREADS=8 VECSIZE=1024 $(MAKE) v2
+	NTHREADS=8 VECSIZE=4096 $(MAKE) v2
+	NTHREADS=8 VECSIZE=16384 $(MAKE) v2
+	NTHREADS=8 VECSIZE=65536 $(MAKE) v2
+	NTHREADS=8 VECSIZE=262144 $(MAKE) v2
 
 run_v3: foo_v3
 	./foo_v3 $(VERBOSITY) -ncyc $(NCYCLES) -N $(VECSIZE)
+
+plot: plot_v1
+
+plot_v1: v1.dat
+	gnuplot --persist v1.dat
 
 ######################################################################
 
@@ -64,13 +110,16 @@ run_v3: foo_v3
 	$(CC) $(LDFLAGS) $^ -o $@ $(LDLIBS) 
 
 %.o: %.cc
-	$(CC) $(CXXFLAGS) $(INCLUDES) -c $^ -o $@
+	$(CC) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 %.o: %.cu
-	$(NVCC) $(NVCCFLAGS) $(INCLUDES) -c $^ -o $@
+	$(NVCC) $(NVCCFLAGS) $(INCLUDES) -c $< -o $@
 
 %.d: %.cc
-	$(CC) -MM $^ -o $@
+	$(CC) $(CXXFLAGS) $(INCLUDES) -MM $< -o $@
+
+%.d: %.cu
+	$(NVCC) $(NVCCFLAGS) $(INCLUDES) -MM $< -o $@
 
 foo_v3: foo_v3.o
 	$(NVCC) $^ -o $@ $(LDLIBS)
@@ -78,3 +127,5 @@ foo_v3: foo_v3.o
 ######################################################################
 
 -include $(DEPS)
+
+.PHONY: run_v0 v1 run_v1 v2 run_v2 v3 run_v3
