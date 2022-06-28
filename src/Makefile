@@ -24,7 +24,11 @@ distclean: clean
 
 ######################################################################
 
-EXEC ?= foo_v0
+vpath %.dat data
+vpath %.h include
+
+ALLSIZES = 64 128 256 512 1024 2048 4096 8192 16384 32768
+ALLTHREADS = 1 2 4 8
 NCYCLES ?= 1000
 VECSIZE ?= 8192
 VERBOSITY ?= #+v #+v +v
@@ -43,7 +47,7 @@ v0 v1 v3 v4: data
 v2: data
 	./foo_$@ $(VERBOSITY) -ncyc $(NCYCLES) -nt $(NTHREADS) -N $(VECSIZE) >> data/$@_nt$(NTHREADS).dat
 
-run: run_v1 run_v2 run_v3 #run_v4
+run: run_v1 run_v2 run_v3 run_v4
 
 run_v0: foo_v0
 	rm -f v0.dat
@@ -161,23 +165,23 @@ run_v3: foo_v3
 	VECSIZE=524288 $(MAKE) v3
 	VECSIZE=1048576 $(MAKE) v3
 
-# run_v4: foo_v4
-# 	rm -f data/v4.dat
-# 	VECSIZE=64 $(MAKE) v4
-# 	VECSIZE=128 $(MAKE) v4
-# 	VECSIZE=256 $(MAKE) v4
-# 	VECSIZE=512 $(MAKE) v4
-# 	VECSIZE=1024 $(MAKE) v4
-# 	VECSIZE=2048 $(MAKE) v4
-# 	VECSIZE=4096 $(MAKE) v4
-# 	VECSIZE=8192 $(MAKE) v4
-# 	VECSIZE=16384 $(MAKE) v4
-# 	VECSIZE=32768 $(MAKE) v4
-# 	VECSIZE=65536 $(MAKE) v4
-# 	VECSIZE=131072 $(MAKE) v4
-# 	VECSIZE=262144 $(MAKE) v4
-# 	VECSIZE=524288 $(MAKE) v4
-# 	VECSIZE=1048576 $(MAKE) v4
+run_v4: foo_v4
+	rm -f data/v4.dat
+	VECSIZE=64 $(MAKE) v4
+	VECSIZE=128 $(MAKE) v4
+	VECSIZE=256 $(MAKE) v4
+	VECSIZE=512 $(MAKE) v4
+	VECSIZE=1024 $(MAKE) v4
+	VECSIZE=2048 $(MAKE) v4
+	VECSIZE=4096 $(MAKE) v4
+	VECSIZE=8192 $(MAKE) v4
+	VECSIZE=16384 $(MAKE) v4
+	VECSIZE=32768 $(MAKE) v4
+#	VECSIZE=65536 $(MAKE) v4
+#	VECSIZE=131072 $(MAKE) v4
+#	VECSIZE=262144 $(MAKE) v4
+#	VECSIZE=524288 $(MAKE) v4
+#	VECSIZE=1048576 $(MAKE) v4
 
 ######################################################################
 
@@ -206,4 +210,4 @@ foo_v4: foo_v4.o
 
 -include $(DEPS)
 
-.PHONY: run_v0 v0 v1 run_v1 v2 run_v2 v3 run_v3 v4 run_v4
+.PHONY: run_v0 run_v1 run_v2 run_v3 run_v4

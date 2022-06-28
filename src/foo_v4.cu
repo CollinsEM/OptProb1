@@ -31,38 +31,6 @@
 //
 // Use OpenMP's high-resolution timing. Run multiple cycles to
 // generate average timings.
-__global__
-void computeX(float * X, const float * x, const float * v, const float * b, int sz) {
-  const int idx = threadIdx.x + blockIdx.x*blockDim.x;
-  if (idx < sz) {
-    X[idx] = x[idx] + v[idx] + b[idx];
-  }
-}
-
-__global__
-void computeDelta(float * delta, float * X, float E, int sz) {
-  const int idx = threadIdx.x + blockIdx.x*blockDim.x;
-  if (idx < sz) {
-    delta[idx] = X[idx] - E;
-  }
-}
-
-__global__
-void computeDeltaSquared(float * dSq, float * X, float E, int sz) {
-  const int idx = threadIdx.x + blockIdx.x*blockDim.x;
-  if (idx < sz) {
-    const float delta = X[idx] - E;
-    dSq[idx] = delta*delta;
-  }
-}
-
-// __global__
-// void computeY(float * Y, const float * X, const float * G, const float * B, float xBar, float rVar, int sz) {
-//   const int idx = threadIdx.x + blockIdx.x*blockDim.x;
-//   if (idx < sz) {
-//     Y[idx] = (X[idx] - xBar)*rVar*G[idx] + B[idx];
-//   }
-// }
 
 #define FULL_MASK 0xffffffff
 __device__
@@ -153,28 +121,7 @@ public:
     return delta*delta;
   }
 };
-
 //--------------------------------------------------------------------
-/// Compute Y = (x' - xbar)/sqrt(var
-//--------------------------------------------------------------------
-__constant__ float XVAR;
-__constant__ float rVAR;
-//--------------------------------------------------------------------
-struct ComputeY {
-  typedef thrust::tuple<float,float,float,float,float> VEC5;
-public:
-  ComputeY(const float xb, const float xv) {
-    cudaMemcpyToSymbol(XBAR, &xb, sizeof(float));
-    cudaMemcpyToSymbol(XVAR, &xv, sizeof(float));
-    const float rV = 1.0/(sqrt(xv) + 1e-5);
-    cudaMemcpyToSymbol(rVAR, &rV, sizeof(float));
-  }
-  __device__
-  float operator()(const VEC5 & v5) const {
-    return (thrust::get<0>(v3) - XBAR)*rVAR*thrust::get<1>(v3) + thrust::get<2>(v3);
-  }
-};
-
 int main(int argc, char ** argv) {
   int verbose = 0;
   int vecSize = 64;
@@ -272,7 +219,7 @@ int main(int argc, char ** argv) {
     
     if (n==0) lbls.push_back("Compute Y");
     t[q++] = omp_get_wtime();
-    computeY<<<G, B>>>(pY, pX, pgamma, pbeta, xBar, rVar, vecSize);
+    computeY<<<G, B>>>(pY, px, pv, pb, pgamma, pbeta, vecSize);
     t[q++] = omp_get_wtime();
     dt[p++] += t[q-1] - t[q-2];
     
