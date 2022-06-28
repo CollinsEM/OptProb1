@@ -84,8 +84,8 @@ int main(int argc, char ** argv) {
     b.init();
     gamma.init();
     beta.init();
-    // Generate the solution vector
-    y.eval(x, v, b, gamma, beta);
+    // Generate the solution vector (only if needed)
+    if (verbose > 0) y.eval(x, v, b, gamma, beta);
 
     if (n==0) lbls.push_back("Compute X, xAvg");
     t[q++] = omp_get_wtime();

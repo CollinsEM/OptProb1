@@ -91,8 +91,8 @@ int main(int argc, char ** argv) {
     b.init();
     gamma.init();
     beta.init();
-    // Generate the solution vector
-    y.eval(x, v, b, gamma, beta);
+    // Generate the solution vector (only if needed)
+    if (verbose > 0) y.eval(x, v, b, gamma, beta);
 
     // NOTE: I'm splitting out the following steps of caching X and
     // computing avg & var so that it's easier to see any latency due to

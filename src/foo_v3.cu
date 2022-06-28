@@ -224,8 +224,8 @@ int main(int argc, char ** argv) {
     b.init();
     gamma.init();
     beta.init();
-    // Generate the solution vector
-    y.eval(x, v, b, gamma, beta);
+    // Generate the solution vector (only if needed)
+    if (verbose > 0) y.eval(x, v, b, gamma, beta);
     
     // Copy the input vectors to the device
     thrust::copy(x.data, x.data+vecSize, dx.begin());
