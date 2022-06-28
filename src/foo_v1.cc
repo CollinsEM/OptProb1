@@ -122,18 +122,20 @@ int main(int argc, char ** argv) {
     }
     t[q++] = omp_get_wtime();
     dt[p++] += t[q-1] - t[q-2];
-    
-    if (n==0) lbls.push_back("Compute Errors");
-    t[q++] = omp_get_wtime();
-    // Compute errors in Y
-    sumDY = 0.0;
-    for (int i=0; i<vecSize; ++i) {
-      dY = Y[i] - y[i];
-      sumDY += dY*dY;
+
+    if (verbose > 0) {
+      if (n==0) lbls.push_back("Compute Errors");
+      t[q++] = omp_get_wtime();
+      // Compute errors in Y
+      sumDY = 0.0;
+      for (int i=0; i<vecSize; ++i) {
+        dY = Y[i] - y[i];
+        sumDY += dY*dY;
+      }
+      t[q++] = omp_get_wtime();
+      dt[p++] += t[q-1] - t[q-2];
+      dYSq += sumDY;
     }
-    t[q++] = omp_get_wtime();
-    dt[p++] += t[q-1] - t[q-2];
-    dYSq += sumDY;
   }
   if (verbose>1) {
     printf("%12g %12g Sum squared errors in Y.\n\n",

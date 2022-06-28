@@ -7,17 +7,17 @@ LDLIBS += -lgomp
 GENCODE_FLAGS = -gencode -arch=compute_61,code=sm_61
 NVCC_FLAGS    = $(OPT) -m64 $(GENCODE_FLAGS) -lineinfo -Xcompiler -fopenmp #-fmad=false
 
-SRCS = $(wildcard *.cc) #$(wildcard *.cu)
+SRCS = $(wildcard *.cc) foo_v3.cu #$(wildcard *.cu)
 TARGETS = $(basename $(SRCS))
 OBJS = $(addsuffix .o,$(TARGETS))
 DEPS = $(if $(findstring clean,$(MAKECMDGOALS)),,$(addsuffix .d,$(TARGETS)))
 
 ######################################################################
 
-default: foo_v0 foo_v1 foo_v2 foo_v3
+default: $(TARGETS)
 
 clean:
-	-rm -rf *.o *.d *~
+	-rm -rf *.o *.d *~ */*~
 
 distclean: clean
 	-rm -rf $(TARGETS) *.dat data

@@ -10,6 +10,10 @@
 #include <TestVec.h>
 #include <emc_utils.h>
 
+#ifndef USECACHE
+#define USECACHE 1
+#endif
+
 // Version 0.2
 //
 // First attempt to implement loops in parallel using OpenMP
@@ -93,15 +97,19 @@ int main(int argc, char ** argv) {
     // NOTE: I'm splitting out the following steps of caching X and
     // computing avg & var so that it's easier to see any latency due to
     // the initial load of data values.
-  
+ 
     if (n==0) lbls.push_back("Compute X, xAvg");
     t[q++] = omp_get_wtime();
     // Compute the sum of all x' values
     sumX = 0.0;
-#pragma omp parallel for
+#pragma omp parallel for reduction(+ : sumX)
     for (int i=0; i<vecSize; ++i) {
+#if USECACHE
       X[i] = x[i] + v[i] + b[i];
       sumX += X[i];
+#else
+      sumX += x[i] + v[i] + b[i];
+#endif
     }
     // Compute the average of x'
     avgX = sumX/vecSize;
@@ -114,8 +122,13 @@ int main(int argc, char ** argv) {
     sumDX = 0.0;
 #pragma omp parallel for reduction(+ : sumDX)
     for (int i=0; i<vecSize; ++i) {
+#if USECACHE
       dX[i] = X[i] - avgX;
       sumDX += dX[i]*dX[i];
+#else
+      float dx = x[i] + v[i] + b[i] - avgX;
+      sumDX += dx*dx;
+#endif
     }
     varX = sumDX/(vecSize-1);
     rVar = 1.0/(sqrt(varX)+1e-8);
@@ -127,23 +140,29 @@ int main(int argc, char ** argv) {
     t[q++] = omp_get_wtime();
 #pragma omp parallel for
     for (int i=0; i<vecSize; ++i) {
+#if USECACHE
       Y[i] = dX[i]*gamma[i]*rVar + beta[i];
+#else
+      Y[i] = (x[i] + v[i] + b[i] - avgX)*gamma[i]*rVar + beta[i];
+#endif
     }
     t[q++] = omp_get_wtime();
     dt[p++] += t[q-1] - t[q-2];
-    
-    if (n==0) lbls.push_back("Compute Errors");
-    t[q++] = omp_get_wtime();
-    // Compute errors in Y
-    sumDY = 0.0;
+
+    if (verbose > 0) {
+      if (n==0) lbls.push_back("Compute Errors");
+      t[q++] = omp_get_wtime();
+      // Compute errors in Y
+      sumDY = 0.0;
 #pragma omp parallel for reduction(+ : sumDY)
-    for (int i=0; i<vecSize; ++i) {
-      dY = Y[i] - y[i];
-      sumDY += dY*dY;
+      for (int i=0; i<vecSize; ++i) {
+        dY = Y[i] - y[i];
+        sumDY += dY*dY;
+      }
+      t[q++] = omp_get_wtime();
+      dt[p++] += t[q-1] - t[q-2];
+      dYSq += sumDY;
     }
-    t[q++] = omp_get_wtime();
-    dt[p++] += t[q-1] - t[q-2];
-    dYSq += sumDY;
   }
 
   const int NT = lbls.size();
