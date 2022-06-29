@@ -32,7 +32,7 @@ ALLTHREADS = 1 2 4 8
 NCYCLES ?= 1000
 VECSIZE ?= 8192
 VERBOSITY ?= #+v #+v +v
-NTHREADS ?= 8
+NTHREADS ?= 1
 
 data:
 	mkdir -p data
@@ -177,11 +177,11 @@ run_v4: foo_v4
 	VECSIZE=8192 $(MAKE) v4
 	VECSIZE=16384 $(MAKE) v4
 	VECSIZE=32768 $(MAKE) v4
-#	VECSIZE=65536 $(MAKE) v4
-#	VECSIZE=131072 $(MAKE) v4
-#	VECSIZE=262144 $(MAKE) v4
-#	VECSIZE=524288 $(MAKE) v4
-#	VECSIZE=1048576 $(MAKE) v4
+	VECSIZE=65536 $(MAKE) v4
+	VECSIZE=131072 $(MAKE) v4
+	VECSIZE=262144 $(MAKE) v4
+	VECSIZE=524288 $(MAKE) v4
+	VECSIZE=1048576 $(MAKE) v4
 
 ######################################################################
 

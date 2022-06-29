@@ -31,84 +31,105 @@
 //
 // Use OpenMP's high-resolution timing. Run multiple cycles to
 // generate average timings.
+//
 
-#define FULL_MASK 0xffffffff
-__device__
-float reduce_sum(const float x, const int sz) {
-  __shared__ float data[2048];
-  const int gid = threadIdx.x + blockIdx.x*blockDim.x; // global thread ID
-  const int tid  = gid & 0xFF; // gid%32 : warp-local thread ID
-  const int wid  = gid >> 5;   // gid/32 : warp ID
-  // Store partial sum value of x to be reduced.
-  float sum = x;
-  int N = sz;
-  while (N>0) {
-    unsigned mask = __ballot_sync(FULL_MASK, gid<N);
-    // Perform a local reduction over the warp
-    for (int offset=16; offset>0; offset/=2) {
-      sum += __shfl_down_sync(mask, sum, offset);
-      // __syncwarp();
-    }
-    // Store the warp-local partial sums in block-shared memory
-    if (tid == 0) data[wid] = sum;
-    __syncthreads();
-    // Reduce the number of active threads
-    N >>= 5; // N /= 32;
-    // Update the thread-local values to be reduced.
-    sum = (gid < N ? data[gid] : 0.0);
+// The GPU has a maximum limit of 1024 threads per block. So, each
+// block can have up to 32 warps of 32 threads.
+//
+// A reduction within a block can be accomplished with two cycles of
+// warp reductions.
+//
+// Each warp reduction can be accomplished in five iterations of
+// warp-shuffle operations.
+//
+// The total number of grid blocks will be (sz+1023)/1024.
+
+//--------------------------------------------------------------------
+// 32-bit mask for threads in one warp
+#define MASK32 0xffffffff
+//--------------------------------------------------------------------
+// Run this kernel with block size of min(1024,N) and grid size of 1.
+//--------------------------------------------------------------------
+__global__
+void block1D_reduce_sum(float * sumX, const float * X, int N) {
+  __shared__ float data[32];
+  // Do a partial sum of strided array elements in serial to bring down
+  // the number of values to fit into a single block.
+  float sum = 0.0;
+  for (int idx=threadIdx.x; idx<N; idx+=blockDim.x) {
+    sum += X[idx];
   }
-  return data[0];
+  // Do a parallel reduction on these partial sums. Start with
+  // warp-level reductions.
+  for (int s=16; s>0; s/=2) {
+    sum += __shfl_down_sync(MASK32, sum, s);
+  }
+  // Communicate partial results in each warp using block-shared memory
+  if ((threadIdx.x % 32) == 0) data[threadIdx.x / 32] = sum;
+  __syncthreads();
+  sum = data[threadIdx.x % 32];
+  // Do a final parallel reduction on the remaining values.
+  for (int s=16; s>0; s/=2) {
+    sum += __shfl_down_sync(MASK32, sum, s);
+  }
+  if (threadIdx.x == 0) {
+    *sumX = sum;
+  }
 }
 
+//--------------------------------------------------------------------
+// Run this kernel with block size of min(1024,N) and grid size of 1.
+//--------------------------------------------------------------------
 __global__
 void computeY(float *Y, const float *x, const float *v, const float *b,
-              const float *gamma, const float *beta, const int sz) {
-  __shared__ float data[1024];
-  const int gid = threadIdx.x + blockIdx.x*blockDim.x; // global thread ID
-  const int tid  = gid & 0xFF; // gid%32 : warp-local thread ID
-  const int wid  = gid >> 5;   // gid/32 : warp ID
-  // Compute the thread-local value of x' = (x + v + b)
-  float xp = (gid<sz ? x[gid] + v[gid] + b[gid] : 0.0);
-  // Store partial sum value of xp/sz to be reduced.
-  float avg = xp/sz;
-  int N = sz;
-  while (N > 0) {
-    unsigned mask = __ballot_sync(FULL_MASK, gid<N);
-    // Perform a local reduction over the warp
-    for (int offset=16; offset>0; offset/=2) {
-      avg += __shfl_down_sync(mask, avg, offset);
-      // __syncwarp();
-    }
-    // Store the warp-local partial sums in block-shared memory
-    if (tid == 0) data[wid] = avg;
-    __syncthreads();
-    // Reduce the number of active threads
-    N >>= 5; // N /= 32;
-    // Update the thread-local values to be reduced.
-    avg = (gid < N ? data[gid] : 0.0);
+              const float *gamma, const float *beta, const int N) {
+  __shared__ float data[32];
+  // Compute the mean for the x' values
+  float sum = 0.0;
+  for (int idx=threadIdx.x; idx<N; idx+=blockDim.x) {
+    sum += x[idx] + v[idx] + b[idx];
   }
-  avg = data[0];
-  float dX = xp - avg;
-  float var = dX*dX/(sz-1);
-  N = 32;
-  while (N > 0) {
-    unsigned mask = __ballot_sync(FULL_MASK, gid<N);
-    // Perform a local reduction over the warp
-    for (int offset=16; offset>0; offset/=2) {
-      var += __shfl_down_sync(mask, var, offset);
-      // __syncwarp();
-    }
-    // Store the warp-local partial sums in block-shared memory
-    if (tid == 0) data[wid] = var;
-    __syncthreads();
-    // Reduce the number of active threads
-    N >>= 5; // N /= 32;
-    // Update the thread-local values to be reduced.
-    var = (gid < N ? data[gid] : 0.0);
+  for (int s=16; s>0; s/=2) {
+    sum += __shfl_down_sync(MASK32, sum, s);
   }
+  if ((threadIdx.x % 32) == 0) data[threadIdx.x / 32] = sum;
+  __syncthreads();
+  sum = data[threadIdx.x % 32];
+  for (int s=16; s>0; s/=2) {
+    sum += __shfl_down_sync(MASK32, sum, s);
+  }
+  if (threadIdx.x == 0) {
+    data[0] = sum;
+    printf("sum: %f, avg: %f\n", sum, sum/N);
+  }
+  
+  // Distribute the average x' value to all threads
+  float xBar = data[0]/N;
+
+  // Compute the variance for the x' values
+  float dX, dXSq = 0.0;
+  for (int idx=threadIdx.x; idx<N; idx+=blockDim.x) {
+    dX = x[idx] + v[idx] + b[idx] - xBar;
+    dXSq += dX*dX;
+  }
+  for (int s=16; s>0; s/=2) {
+    dXSq += __shfl_down_sync(MASK32, dXSq, s);
+  }
+  if ((threadIdx.x % 32) == 0) data[threadIdx.x / 32] = sum;
+  __syncthreads();
+  dXSq = data[threadIdx.x % 32];
+  for (int s=16; s>0; s/=2) {
+    dXSq += __shfl_down_sync(MASK32, dXSq, s);
+  }
+  if (threadIdx.x == 0) {
+    data[0] = dXSq;
+    printf("dXSq: %f, var: %f\n", dXSq, dXSq/(N-1));
+  }
+  // Distribute the variance to all threads
+  float var = data[0]/(N-1);
   float rVar = 1.0/(sqrt(var)+1e-8);
-  if (gid < sz) {
-    Y[gid] = dX*rVar*gamma[gid] + beta[gid];
+  for (int idx=threadIdx.x; idx<N; idx+=blockDim.x) {
+    Y[idx] = (x[idx] + v[idx] + b[idx] - xBar)*rVar*gamma[idx] + beta[idx];
   }
 }
 //--------------------------------------------------------------------
@@ -154,9 +175,6 @@ int main(int argc, char ** argv) {
   if (verbose > 0) printf("verbose:  %d\n", verbose);
   // Report input vector size
   if (verbose > 0) printf("vecSize:    %d\n", vecSize);
-  // Report number of threads
-  // if (verbose > 0) printf("numThreads: %d\n", numThreads);
-  // omp_set_num_threads(numThreads);
   
   // Time stamps
   double t[32];
@@ -174,7 +192,7 @@ int main(int argc, char ** argv) {
   // Solution vector
   SolnVec<float> y(vecSize);
   
-  const dim3 G((vecSize+1023)/1024);
+  const dim3 G(1);
   const dim3 B(min(1024,vecSize));
   // Input vectors
   thrust::device_vector<float> dx(vecSize);
