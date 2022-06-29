@@ -93,15 +93,20 @@ void computeY(float *Y, const float *x, const float *v, const float *b,
     sum += __shfl_down_sync(MASK32, sum, s);
   }
   if ((threadIdx.x % 32) == 0) data[threadIdx.x / 32] = sum;
+  
   __syncthreads();
+  
   sum = data[threadIdx.x % 32];
   for (int s=16; s>0; s/=2) {
     sum += __shfl_down_sync(MASK32, sum, s);
   }
   if (threadIdx.x == 0) {
     data[0] = sum;
-    printf("sum: %f, avg: %f\n", sum, sum/N);
+    // printf("sum: %f\n", sum);
+    // printf("avg: %f\n", sum/N);
   }
+  
+  __syncthreads();
   
   // Distribute the average x' value to all threads
   float xBar = data[0]/N;
@@ -116,15 +121,23 @@ void computeY(float *Y, const float *x, const float *v, const float *b,
     dXSq += __shfl_down_sync(MASK32, dXSq, s);
   }
   if ((threadIdx.x % 32) == 0) data[threadIdx.x / 32] = sum;
+  
   __syncthreads();
+  
   dXSq = data[threadIdx.x % 32];
   for (int s=16; s>0; s/=2) {
     dXSq += __shfl_down_sync(MASK32, dXSq, s);
   }
   if (threadIdx.x == 0) {
     data[0] = dXSq;
-    printf("dXSq: %f, var: %f\n", dXSq, dXSq/(N-1));
+    float tmp = dXSq/(N-1);
+    // printf("dXSq:   %f\n", dXSq);
+    // printf("var:    %f\n", tmp);
+    // printf("stdDev: %f\n", sqrt(tmp));
   }
+  
+  __syncthreads();
+  
   // Distribute the variance to all threads
   float var = data[0]/(N-1);
   float rVar = 1.0/(sqrt(var)+1e-8);
